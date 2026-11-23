@@ -17,6 +17,8 @@ EMAIL = re.compile(r"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+")
 PROOF = re.compile(r"[A-Za-z0-9+/]{43}=")
 WRAPPED_KEY = re.compile(r"[A-Za-z0-9+/]{22}==\.[A-Za-z0-9+/]{16}\.[A-Za-z0-9+/]{64}")
 TOKEN_DAYS = 90
+INVITE_TICKET = re.compile(r"([0-9]{1,12})\.([A-Za-z0-9_-]{22})\.([a-f0-9]{64})")
+INVITE_TTL = 900
 AUTH_WORKERS = threading.BoundedSemaphore(4)
 
 SCHEMA = """
@@ -86,10 +88,50 @@ def send_code(path, recipient, code):
         connection.send_message(message)
 
 
+def invite_setting(db):
+    row = db.execute("SELECT value FROM server_settings WHERE name='registration_invite'").fetchone()
+    return row[0] if row else None
+
+
+def invite_signature(setting, body):
+    return hmac.new(setting.encode(), ("blueee-registration:" + body).encode(), hashlib.sha256).hexdigest()
+
+
+def valid_invite_ticket(setting, ticket):
+    matched = INVITE_TICKET.fullmatch(ticket) if isinstance(ticket, str) else None
+    if not matched:
+        return False
+    expiry, nonce, signature = matched.groups()
+    now = int(time.time())
+    return now < int(expiry) <= now + INVITE_TTL and hmac.compare_digest(
+        signature, invite_signature(setting, expiry + "." + nonce)
+    )
+
+
+def check_invite(database, path, invite):
+    if not isinstance(invite, str) or not 1 <= len(invite) <= 256:
+        return 400, "invite_invalid"
+    with database(path) as db:
+        setting = invite_setting(db)
+    if not setting:
+        return 403, "registration_closed"
+    if not AUTH_WORKERS.acquire(blocking=False):
+        return 429, "busy"
+    try:
+        if not matches(invite, setting):
+            return 403, "invite_invalid"
+    finally:
+        AUTH_WORKERS.release()
+    body = str(int(time.time()) + INVITE_TTL) + "." + secrets.token_urlsafe(16)
+    return 200, {"ticket": body + "." + invite_signature(setting, body)}
+
+
 def connect(database, path, data, token_hash):
     if not isinstance(data, dict):
         return 400, "invalid_request"
     mode = data.get("mode")
+    if mode == "check_invite":
+        return check_invite(database, path, data.get("invite"))
     name, slug, proof = (data.get(field) for field in ("account", "vault", "proof"))
     if mode not in ("register", "verify", "login", "create") or not all(
         isinstance(value, str) and pattern.fullmatch(value)
@@ -115,24 +157,16 @@ def enrol(database, path, data, name, slug, proof, wrapped):
         return 400, "email_invalid"
     if data["mode"] == "verify":
         return verify_email(database, path, name, email, proof, data.get("code"))
-    invite = data.get("invite")
-    if not isinstance(invite, str) or not 1 <= len(invite) <= 256:
-        return 400, "invalid_request"
-    with database(path) as db:
-        setting = db.execute("SELECT value FROM server_settings WHERE name='registration_invite'").fetchone()
-    if not setting:
-        return 403, "registration_closed"
-    if not matches(invite, setting[0]):
-        return 403, "invite_invalid"
-
+    ticket = data.get("ticket")
     now = int(time.time())
     code = f"{secrets.randbelow(1000000):06}"
-    verifier = password_hash(proof)
-    code_hash = password_hash(code)
     with database(path) as db:
         db.execute("BEGIN IMMEDIATE")
-        if db.execute("SELECT value FROM server_settings WHERE name='registration_invite'").fetchone() != setting:
-            return 403, "invite_invalid"
+        setting = invite_setting(db)
+        if not setting:
+            return 403, "registration_closed"
+        if not valid_invite_ticket(setting, ticket):
+            return 403, "invite_step_required"
         previous = db.execute("""
             SELECT name,state,verifier,sent FROM registrations WHERE email=?
         """, (email,)).fetchone()
@@ -149,6 +183,8 @@ def enrol(database, path, data, name, slug, proof, wrapped):
         db.execute("DELETE FROM registrations WHERE state='unverified' AND expires<=?", (now,))
         if db.execute("SELECT 1 FROM registrations WHERE name=? AND email<>?", (name, email)).fetchone():
             return 409, "registration_conflict"
+        verifier = password_hash(proof)
+        code_hash = password_hash(code)
         db.execute("""
             INSERT INTO registrations(name,email,state,verifier,slug,wrapped_key,code_hash,expires,sent)
             VALUES (?,?,'unverified',?,?,?,?,?,?) ON CONFLICT(email) DO UPDATE SET name=excluded.name,

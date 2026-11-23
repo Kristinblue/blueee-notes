@@ -87,20 +87,28 @@ with ThreadingHTTPServer(("127.0.0.1", 0), handler(path)) as server:
             },
         } : require("./plugin/engine"),
     });
-    const {connectAccount} = localAccount.exports;
+    const {checkInvite, connectAccount} = localAccount.exports;
     const account = {
         account: "Pilot-Owner", vault: "main", password: "test-6", invite: "local-invite-only",
         email: "owner@example.com",
     };
     const accountAdmin = (...args) => execFileSync(python, ["server.py", "--db", join(dir, "pilot.sqlite3"), ...args],
         {encoding: "utf8"});
-    const requestCode = values => connectAccount({...values, mode: "register"});
+    await assert.rejects(checkInvite("wrong"), /口令错误/);
+    await assert.rejects(connectAccount({...account, mode: "register"}), /重新输入口令/);
+    const ticket = await checkInvite(account.invite);
+    const changedTicket = ticket.slice(0, -1) + (ticket.endsWith("0") ? "1" : "0");
+    await assert.rejects(connectAccount({...account, mode: "register", ticket: changedTicket}), /重新输入口令/);
+    const requestCode = async values => connectAccount({...values, mode: "register", ticket: await checkInvite(values.invite)});
     const confirmEmail = (values, code) => connectAccount({...values, mode: "verify", code});
     const mail = () => fs.readFileSync(join(dir, "pilot.mail"), "ascii");
-    await assert.rejects(requestCode({...account, invite: "wrong"}), /口令错误/);
     assert.equal((await requestCode(account)).status, "verification_required");
     assert.deepEqual(JSON.parse(accountAdmin("list-registrations")), []);
     const code = mail();
+    execFileSync(python, ["server.py", "--db", join(dir, "pilot.sqlite3"), "set-registration-invite", "--stdin"],
+        {input: "local-rotated-invite\n"});
+    await assert.rejects(connectAccount({...account, mode: "register", ticket}), /重新输入口令/);
+    account.invite = "local-rotated-invite";
     await assert.rejects(confirmEmail(account, code === "123456" ? "654321" : "123456"), /验证码或账号/);
     assert.equal((await confirmEmail(account, code)).status, "approval_pending");
     assert.deepEqual(JSON.parse(accountAdmin("list-registrations")), [["pilot-owner", "owner@example.com"]]);
