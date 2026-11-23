@@ -336,6 +336,7 @@ module.exports = class SimpleNoteSync extends Plugin {
         this.busy = true;
         try {
             const pair = await connectAccount(values);
+            if (pair.status) return pair.status;
             if (current && current.key !== pair.key) throw Error("远端仓库密钥已变更，无法安全重新连接。");
             await this.saveData({...this.state, pair});
             this.state.pair = pair;

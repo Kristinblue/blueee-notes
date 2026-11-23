@@ -39,6 +39,7 @@ test("real server isolates users and vaults, supports scopes and preserves diver
     const dir = await mkdtemp(join(tmpdir(), "simple-note-sync-"));
     const server = spawn(python, ["-u", "-c", `
 import sys
+from pathlib import Path
 from http.server import ThreadingHTTPServer
 from server import init, grant, handler, database
 import accounts
@@ -46,6 +47,7 @@ path = sys.argv[1]
 init(path)
 with database(path) as db:
     accounts.set_invite(db, "local-invite-only")
+accounts.send_code = lambda path, recipient, code: Path(path).with_suffix(".mail").write_text(code, encoding="ascii")
 owner = grant(path, "owner", "primary")
 friend = grant(path, "friend", "private")
 shared = grant(path, "friend", "primary")
@@ -86,16 +88,37 @@ with ThreadingHTTPServer(("127.0.0.1", 0), handler(path)) as server:
         } : require("./plugin/engine"),
     });
     const {connectAccount} = localAccount.exports;
-    const account = {account: "pilot-owner", vault: "main", password: "local-test-password", invite: "local-invite-only"};
-    await assert.rejects(connectAccount({...account, mode: "register", invite: "wrong"}), /口令错误/);
-    const first = await connectAccount({...account, mode: "register"});
+    const account = {
+        account: "Pilot-Owner", vault: "main", password: "test-6", invite: "local-invite-only",
+        email: "owner@example.com",
+    };
+    const accountAdmin = (...args) => execFileSync(python, ["server.py", "--db", join(dir, "pilot.sqlite3"), ...args],
+        {encoding: "utf8"});
+    const requestCode = values => connectAccount({...values, mode: "register"});
+    const confirmEmail = (values, code) => connectAccount({...values, mode: "verify", code});
+    const mail = () => fs.readFileSync(join(dir, "pilot.mail"), "ascii");
+    await assert.rejects(requestCode({...account, invite: "wrong"}), /口令错误/);
+    assert.equal((await requestCode(account)).status, "verification_required");
+    assert.deepEqual(JSON.parse(accountAdmin("list-registrations")), []);
+    const code = mail();
+    await assert.rejects(confirmEmail(account, code === "123456" ? "654321" : "123456"), /验证码或账号/);
+    assert.equal((await confirmEmail(account, code)).status, "approval_pending");
+    assert.deepEqual(JSON.parse(accountAdmin("list-registrations")), [["pilot-owner", "owner@example.com"]]);
+    await assert.rejects(connectAccount({...account, mode: "login"}), /等待管理员/);
+    accountAdmin("approve-registration", "pilot-owner");
+    const first = await connectAccount({...account, mode: "login"});
     const second = await connectAccount({...account, mode: "login", invite: ""});
     assert.equal(first.key, second.key);
     assert.notEqual(first.token, second.token);
     await assert.rejects(connectAccount({...account, mode: "login", password: "wrong-password"}), /密码错误/);
     const otherVault = await connectAccount({...account, vault: "second", mode: "create"});
     assert.notEqual(first.key, otherVault.key);
-    const otherAccount = await connectAccount({...account, account: "pilot-friend", mode: "register"});
+    await assert.rejects(requestCode({...account, account: "duplicate-email", email: "OWNER@example.com"}), /邮箱已/);
+    const friendAccount = {...account, account: "pilot-friend", email: "friend@example.com"};
+    assert.equal((await requestCode(friendAccount)).status, "verification_required");
+    assert.equal((await confirmEmail(friendAccount, mail())).status, "approval_pending");
+    accountAdmin("approve-registration", "pilot-friend");
+    const otherAccount = await connectAccount({...friendAccount, mode: "login"});
     const pluginCipher = await require("./plugin/engine").cryptography(first.key);
     const context = "blueee-notes-plugin-list-v1";
     const payload = JSON.stringify([{id: "obsidian-excalidraw-plugin", name: "Excalidraw", version: "2.0.0", enabled: true}]);
@@ -105,7 +128,7 @@ with ThreadingHTTPServer(("127.0.0.1", 0), handler(path)) as server:
     assert.equal(contents(await pluginCipher.open(received.encrypted, context)), payload);
     assert.deepEqual(await requester(otherVault.token)("GET", "/v1/plugin-list"), {encrypted: null});
     assert.deepEqual(await requester(otherAccount.token)("GET", "/v1/plugin-list"), {encrypted: null});
-    execFileSync(python, ["server.py", "--db", join(dir, "pilot.sqlite3"), "disable-account", account.account]);
+    execFileSync(python, ["server.py", "--db", join(dir, "pilot.sqlite3"), "disable-account", account.account.toLowerCase()]);
     await assert.rejects(requester(first.token)("GET", "/v1/manifest"), /401/);
     await assert.rejects(requester(second.token)("GET", "/v1/plugin-list"), /401/);
     assert.deepEqual(await requester(otherAccount.token)("GET", "/v1/manifest"), []);

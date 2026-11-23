@@ -183,7 +183,7 @@ def handler(path):
                     self.reply(400, {"error": "invalid_request"})
                     return
                 status, result = accounts.connect(database, path, body, token_hash)
-                self.reply(status, result if status == 200 else {"error": result})
+                self.reply(status, result if status in (200, 202) else {"error": result})
                 return
             if route == "/v1/plugin-list":
                 self.save_plugin_list()
@@ -313,6 +313,12 @@ def main():
     invite.add_argument("--stdin", action="store_true")
     commands.add_parser("close-registration")
     commands.add_parser("list-accounts")
+    commands.add_parser("list-registrations")
+    commands.add_parser("set-smtp")
+    commands.add_parser("mail-status")
+    for action in ("approve-registration", "reject-registration"):
+        command = commands.add_parser(action)
+        command.add_argument("name", type=validate_name)
     for action in ("disable-account", "enable-account"):
         command = commands.add_parser(action)
         command.add_argument("name", type=validate_name)
@@ -336,6 +342,31 @@ def main():
     elif args.command == "revoke":
         with database(path) as db:
             db.execute("DELETE FROM access WHERE user=? AND vault=?", (args.user, args.vault))
+    elif args.command == "mail-status":
+        print("configured" if accounts.mail_path(path).is_file() else "unconfigured")
+    elif args.command == "set-smtp":
+        config = json.loads(sys.stdin.readline(8192))
+        if not isinstance(config, dict) or config.get("port") not in (465, 587):
+            raise SystemExit("SMTP 端口请使用 465 或 587。")
+        for field in ("host", "address", "username", "password"):
+            value = config.get(field)
+            if not isinstance(value, str) or not value or len(value) > 1024 or "\n" in value or "\r" in value:
+                raise SystemExit("SMTP 配置字段无效。")
+        if not accounts.EMAIL.fullmatch(config["address"]):
+            raise SystemExit("发件邮箱无效。")
+        destination = accounts.mail_path(path)
+        temporary = destination.with_suffix(".tmp")
+        temporary.write_text(json.dumps(config), encoding="utf-8")
+        temporary.chmod(0o600)
+        temporary.replace(destination)
+    elif args.command == "list-registrations":
+        with database(path) as db:
+            print(json.dumps(list(db.execute("""
+                SELECT name,email FROM registrations WHERE state='pending' ORDER BY sent,name
+            """))))
+    elif args.command in ("approve-registration", "reject-registration"):
+        with database(path) as db:
+            accounts.decide(db, args.name.lower(), args.command == "approve-registration")
     elif args.command in ("set-registration-invite", "close-registration", "list-accounts",
                           "disable-account", "enable-account"):
         with database(path) as db:

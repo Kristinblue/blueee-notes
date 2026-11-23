@@ -9,6 +9,13 @@ const ERRORS = {
     invalid_request: "账号或远端仓库名需要 3–40 个小写字母、数字、横线或下划线。",
     registration_closed: "服务器还没有开放注册，请联系管理员。",
     invite_invalid: "注册口令错误或已更换。",
+    email_invalid: "请输入有效的邮箱地址。",
+    registration_conflict: "该账号名或邮箱已用于其他注册，请联系管理员。",
+    mail_unavailable: "验证码发送失败，请联系管理员检查发件邮箱。",
+    resend_wait: "请等一分钟后再申请发送验证码。",
+    code_invalid: "验证码或账号信息不正确。",
+    code_expired: "验证码已过期或错误次数过多，请重新发送。",
+    approval_pending: "邮箱已验证，等待管理员审批后才能登录。",
     account_exists: "这个账号已存在，请登录或换个账号名。",
     login_invalid: "账号或密码错误，或账号已被停用。",
     vault_missing: "这个账号下没有该仓库，请核对名称或选择新建远端仓库。",
@@ -30,14 +37,20 @@ function wrappingContext(account, vault, salt) {
     return encoder.encode("blueee-notes-vault-key-v1:" + account + ":" + vault + ":" + salt);
 }
 
-async function connectAccount({mode, account, vault, password, invite}) {
+async function connectAccount({mode, account, vault, password, invite, email, code}) {
+    account = account.toLowerCase();
     if (!NAME.test(account) || !NAME.test(vault)) throw Error(ERRORS.invalid_request);
-    if (password.length < 12 || password.length > 256) throw Error("请输入 12–256 个字符的密码。");
+    if (password.length < 6 || password.length > 256) throw Error("请输入 6–256 个字符的密码。");
     if (mode === "register" && !invite) throw Error("请输入管理员给你的注册口令。");
     const {proof, wrap} = await accountKeys(account, password);
     const data = {mode, account, vault, proof};
+    if (mode === "register" || mode === "verify") {
+        data.email = (email ?? "").trim().toLowerCase();
+        if (!data.email || !data.email.includes("@")) throw Error(ERRORS.email_invalid);
+    }
     if (mode === "register") data.invite = invite;
-    if (mode !== "login") {
+    if (mode === "verify") data.code = code;
+    if (mode === "register" || mode === "create") {
         const key = crypto.getRandomValues(new Uint8Array(32));
         const salt = encode64(crypto.getRandomValues(new Uint8Array(16)));
         const nonce = crypto.getRandomValues(new Uint8Array(12));
@@ -53,6 +66,7 @@ async function connectAccount({mode, account, vault, password, invite}) {
     } catch {
         throw Error("无法连接 Blueee Notes 登录服务，请检查网络后重试。");
     }
+    if (response.status === 202) return {status: response.json.status};
     if (response.status !== 200) {
         let message;
         try { message = ERRORS[response.json.error]; } catch { /* A proxy may return a non-JSON response. */ }
@@ -73,17 +87,28 @@ function accountForm(parent, plugin, done) {
     const lockedVault = Boolean(pair?.account);
     const root = parent.createEl("form", {cls: "simple-note-sync-account"});
     const form = {mode: "login"};
+    let action;
+    const setMode = mode => {
+        form.mode = mode;
+        const registering = mode === "register";
+        const verifying = mode === "verify";
+        emailRow.settingEl.hidden = !(registering || verifying);
+        inviteRow.settingEl.hidden = !registering;
+        codeRow.settingEl.hidden = !verifying;
+        email.required = registering || verifying;
+        invite.required = registering;
+        code.required = verifying;
+        submit.setText(registering ? "发送验证码" : verifying ? "验证邮箱" : "连接 Blueee Notes");
+    };
     new Setting(root).setName("账号操作").addDropdown(field => {
+        action = field;
         field.addOption("login", "登录并连接已有仓库");
         if (!lockedVault) {
-            field.addOption("register", "用口令注册并创建首个仓库");
+            field.addOption("register", "用口令注册");
+            field.addOption("verify", "填写邮件验证码");
             field.addOption("create", "已有账号，新建远端仓库");
         }
-        field.onChange(mode => {
-            form.mode = mode;
-            inviteRow.settingEl.hidden = mode !== "register";
-            invite.required = mode === "register";
-        });
+        field.onChange(setMode);
     });
     const inputs = {};
     for (const [id, label, type, initial, autocomplete] of [
@@ -102,6 +127,21 @@ function accountForm(parent, plugin, done) {
             inputs[id] = input;
         });
     }
+    let email;
+    const emailRow = new Setting(root).setName("邮箱").addText(field => {
+        email = field.inputEl;
+        email.type = "email";
+        email.autocomplete = "email";
+        email.setAttribute("aria-label", "邮箱");
+    });
+    let code;
+    const codeRow = new Setting(root).setName("邮件验证码").addText(field => {
+        code = field.inputEl;
+        code.inputMode = "numeric";
+        code.maxLength = 6;
+        code.autocomplete = "one-time-code";
+        code.setAttribute("aria-label", "邮件验证码");
+    });
     let invite;
     const inviteRow = new Setting(root).setName("管理员注册口令").addText(field => {
         invite = field.inputEl;
@@ -109,24 +149,39 @@ function accountForm(parent, plugin, done) {
         invite.autocomplete = "off";
         invite.setAttribute("aria-label", "管理员注册口令");
     });
-    inviteRow.settingEl.hidden = true;
     const feedback = root.createDiv({cls: "simple-note-sync-status", attr: {role: "status"}});
     const submit = root.createEl("button", {text: "连接 Blueee Notes", cls: "mod-cta", attr: {type: "submit"}});
+    setMode("login");
     root.addEventListener("submit", async event => {
         event.preventDefault();
         submit.disabled = true;
         feedback.dataset.state = "info";
         feedback.setText("正在连接…");
         try {
-            await plugin.connectAccount({
+            const result = await plugin.connectAccount({
                 mode: form.mode,
-                account: inputs.account.value.trim(),
+                account: inputs.account.value.trim().toLowerCase(),
                 vault: inputs.vault.value.trim(),
                 password: inputs.password.value,
                 invite: invite.value,
+                email: email.value,
+                code: code.value.trim(),
             });
-            inputs.password.value = invite.value = "";
-            done();
+            invite.value = "";
+            if (result === "verification_required") {
+                action.setValue("verify");
+                setMode("verify");
+                feedback.setText("已发送验证码，有效期 15 分钟。");
+                code.focus();
+            } else if (result === "approval_pending") {
+                inputs.password.value = code.value = "";
+                action.setValue("login");
+                setMode("login");
+                feedback.setText(ERRORS.approval_pending);
+            } else {
+                inputs.password.value = code.value = "";
+                done();
+            }
         } catch (error) {
             feedback.dataset.state = "error";
             feedback.setText(error.message);

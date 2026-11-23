@@ -89,6 +89,10 @@ class Manager:
             ("停用／启用账号", self.change_account),
         ):
             self.button(accounts, label, action).pack(side="left", padx=(0, 8))
+        enrolment = ttk.Frame(frame)
+        enrolment.pack(fill="x", pady=(8, 0))
+        self.button(enrolment, "待审批注册", self.list_registrations).pack(side="left", padx=(0, 8))
+        self.button(enrolment, "配置发信邮箱", self.configure_smtp).pack(side="left")
         self.window.protocol("WM_DELETE_WINDOW", self.close)
         self.refresh()
 
@@ -130,6 +134,69 @@ class Manager:
                 messagebox.showerror("笔记同步管理", str(error), parent=self.window)
 
         self.window.after(80, check)
+
+    def list_registrations(self):
+        self.submit(("list-registrations",), "正在读取待审批注册…", self.show_registrations)
+
+    def show_registrations(self, output):
+        registrations = json.loads(output)
+        self.status.set(f"{len(registrations)} 项待审批")
+        if not registrations:
+            messagebox.showinfo("注册审批", "没有已验证邮箱的待审批申请。", parent=self.window)
+            return
+        panel = tk.Toplevel(self.window)
+        panel.title("待审批注册")
+        panel.geometry("570x330")
+        listing = ttk.Treeview(panel, columns=("name", "email"), show="headings", selectmode="browse")
+        listing.heading("name", text="用户名")
+        listing.heading("email", text="已验证邮箱")
+        listing.pack(fill="both", expand=True, padx=12, pady=12)
+        for name, email in registrations:
+            listing.insert("", "end", values=(name, email))
+
+        def decide(approve):
+            rows = listing.selection()
+            if not rows:
+                return
+            name, email = listing.item(rows[0], "values")
+            action = "批准" if approve else "拒绝"
+            if not messagebox.askyesno("注册审批", f"{action} {name}（{email}）的注册申请？", parent=panel):
+                return
+            def done(_):
+                panel.destroy()
+                self.status.set(f"已{action} {name} 的注册。")
+            command = "approve-registration" if approve else "reject-registration"
+            self.submit((command, name), f"正在{action}…", done)
+
+        controls = ttk.Frame(panel)
+        controls.pack(fill="x", padx=12, pady=(0, 12))
+        ttk.Button(controls, text="批准", command=lambda: decide(True)).pack(side="left")
+        ttk.Button(controls, text="拒绝", command=lambda: decide(False)).pack(side="left", padx=8)
+
+    def configure_smtp(self):
+        parent = self.window
+        address = simpledialog.askstring("发信邮箱", "输入专门用于发验证码的 SMTP 邮箱", parent=parent)
+        if not address:
+            return
+        address = address.strip().lower()
+        host = simpledialog.askstring("发信邮箱", "输入 SMTP 主机名",
+                                      initialvalue="smtp.qq.com" if address.endswith("@qq.com") else "",
+                                      parent=parent)
+        if not host:
+            return
+        port = simpledialog.askinteger("发信邮箱", "SMTP 端口（465 或 587）", initialvalue=465, parent=parent)
+        if port not in (465, 587):
+            return
+        username = simpledialog.askstring("发信邮箱", "SMTP 用户名", initialvalue=address, parent=parent)
+        if not username:
+            return
+        password = simpledialog.askstring("发信邮箱", "SMTP 授权码或应用密码", show="*", parent=parent)
+        if not password:
+            return
+        config = dict(address=address, host=host.strip(), port=port, username=username.strip(), password=password)
+        self.submit(("set-smtp",), "正在保存发信配置…",
+                    lambda _: self.status.set("发信配置已保存，可以申请注册并验证邮箱。"),
+                    stdin=json.dumps(config) + "\n")
 
     def set_invite(self):
         code = simpledialog.askstring("设置注册口令", "请输入至少 12 个字符的注册口令",
