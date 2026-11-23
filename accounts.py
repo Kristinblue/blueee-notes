@@ -15,7 +15,7 @@ import time
 NAME = re.compile(r"[a-z0-9][a-z0-9_-]{2,39}")
 EMAIL = re.compile(r"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+")
 PROOF = re.compile(r"[A-Za-z0-9+/]{43}=")
-WRAPPED_KEY = re.compile(r"[A-Za-z0-9+/]{22}==\.[A-Za-z0-9+/]{16}\.[A-Za-z0-9+/]{64}")
+WRAPPED_KEY = re.compile(r"v2\.[A-Za-z0-9+/]{22}==\.[A-Za-z0-9+/]{16}\.[A-Za-z0-9+/]{64}")
 TOKEN_DAYS = 90
 INVITE_TICKET = re.compile(r"([0-9]{1,12})\.([A-Za-z0-9_-]{22})\.([a-f0-9]{64})")
 INVITE_TTL = 900
@@ -66,6 +66,7 @@ def set_invite(db, code=None):
         raise SystemExit("口令长度无效或两次输入不同。")
     db.execute("""INSERT INTO server_settings VALUES ('registration_invite', ?)
                   ON CONFLICT(name) DO UPDATE SET value=excluded.value""", (password_hash(code),))
+    db.execute("DELETE FROM server_settings WHERE name='registration_closed'")
 
 
 def mail_path(path):
@@ -77,7 +78,11 @@ def send_code(path, recipient, code):
     message = EmailMessage()
     message["From"], message["To"] = config["address"], recipient
     message["Subject"] = "Blueee Notes 邮箱验证码"
-    message.set_content(f"你的 Blueee Notes 验证码是 {code}。验证码在 15 分钟内有效。")
+    message.set_content(
+        "欢迎来到blueee的笔记同步小插件🥰。这是一款个人制作的插件，用来方便的同步多设备的笔记，"
+        "后续功能还有待开发喔～这里是验证码，核对成功后，再等作者同意用户的创建，就能使用啦！"
+        f"\n\n验证码：{code}\n有效期：15 分钟\n"
+    )
     context = ssl.create_default_context()
     smtp = smtplib.SMTP_SSL if config["port"] == 465 else smtplib.SMTP
     options = {"context": context} if config["port"] == 465 else {}
@@ -141,6 +146,10 @@ def connect(database, path, data, token_hash):
     wrapped = data.get("wrappedKey")
     if mode in ("register", "create") and (not isinstance(wrapped, str) or not WRAPPED_KEY.fullmatch(wrapped)):
         return 400, "invalid_request"
+    with database(path) as db:
+        setting = invite_setting(db)
+    if not setting or not valid_invite_ticket(setting, data.get("ticket")):
+        return 403, "invite_step_required"
     if not AUTH_WORKERS.acquire(blocking=False):
         return 429, "busy"
     try:
@@ -163,9 +172,9 @@ def enrol(database, path, data, name, slug, proof, wrapped):
     with database(path) as db:
         db.execute("BEGIN IMMEDIATE")
         setting = invite_setting(db)
-        if not setting:
+        if db.execute("SELECT 1 FROM server_settings WHERE name='registration_closed'").fetchone():
             return 403, "registration_closed"
-        if not valid_invite_ticket(setting, ticket):
+        if not setting or not valid_invite_ticket(setting, ticket):
             return 403, "invite_step_required"
         previous = db.execute("""
             SELECT name,state,verifier,sent FROM registrations WHERE email=?

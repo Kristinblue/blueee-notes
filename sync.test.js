@@ -75,11 +75,13 @@ with ThreadingHTTPServer(("127.0.0.1", 0), handler(path)) as server:
         if (!response.ok) throw Object.assign(Error("HTTP " + response.status), {status: response.status});
         return response.json();
     };
+    const outbound = [];
     const localAccount = {exports: {}};
     vm.runInNewContext(fs.readFileSync(join(__dirname, "plugin/account.js"), "utf8"), {
         module: localAccount, crypto, TextEncoder,
         require: name => name === "obsidian" ? {
             requestUrl: async options => {
+                outbound.push(options.body);
                 const response = await fetch(`http://127.0.0.1:${port}/v1/account/connect`, {
                     method: options.method, body: options.body, signal: AbortSignal.timeout(5000),
                 });
@@ -87,10 +89,10 @@ with ThreadingHTTPServer(("127.0.0.1", 0), handler(path)) as server:
             },
         } : require("./plugin/engine"),
     });
-    const {checkInvite, connectAccount} = localAccount.exports;
+    const {checkInvite, connectAccount, generateVaultCode} = localAccount.exports;
     const account = {
         account: "Pilot-Owner", vault: "main", password: "test-6", invite: "local-invite-only",
-        email: "owner@example.com",
+        email: "owner@example.com", vaultCode: generateVaultCode(),
     };
     const accountAdmin = (...args) => execFileSync(python, ["server.py", "--db", join(dir, "pilot.sqlite3"), ...args],
         {encoding: "utf8"});
@@ -100,7 +102,10 @@ with ThreadingHTTPServer(("127.0.0.1", 0), handler(path)) as server:
     const changedTicket = ticket.slice(0, -1) + (ticket.endsWith("0") ? "1" : "0");
     await assert.rejects(connectAccount({...account, mode: "register", ticket: changedTicket}), /重新输入口令/);
     const requestCode = async values => connectAccount({...values, mode: "register", ticket: await checkInvite(values.invite)});
-    const confirmEmail = (values, code) => connectAccount({...values, mode: "verify", code});
+    const confirmEmail = async (values, code) => connectAccount({
+        ...values, mode: "verify", ticket: await checkInvite(values.invite), code,
+    });
+    const login = async values => connectAccount({...values, mode: "login", ticket: await checkInvite(account.invite)});
     const mail = () => fs.readFileSync(join(dir, "pilot.mail"), "ascii");
     assert.equal((await requestCode(account)).status, "verification_required");
     assert.deepEqual(JSON.parse(accountAdmin("list-registrations")), []);
@@ -112,21 +117,23 @@ with ThreadingHTTPServer(("127.0.0.1", 0), handler(path)) as server:
     await assert.rejects(confirmEmail(account, code === "123456" ? "654321" : "123456"), /验证码或账号/);
     assert.equal((await confirmEmail(account, code)).status, "approval_pending");
     assert.deepEqual(JSON.parse(accountAdmin("list-registrations")), [["pilot-owner", "owner@example.com"]]);
-    await assert.rejects(connectAccount({...account, mode: "login"}), /等待管理员/);
+    await assert.rejects(connectAccount({...account, mode: "login"}), /重新输入口令/);
+    await assert.rejects(login(account), /等待管理员/);
     accountAdmin("approve-registration", "pilot-owner");
-    const first = await connectAccount({...account, mode: "login"});
-    const second = await connectAccount({...account, mode: "login", invite: ""});
+    const first = await login(account);
+    const second = await login(account);
+    await assert.rejects(login({...account, vaultCode: generateVaultCode()}), /加密密钥不正确/);
     assert.equal(first.key, second.key);
     assert.notEqual(first.token, second.token);
-    await assert.rejects(connectAccount({...account, mode: "login", password: "wrong-password"}), /密码错误/);
-    const otherVault = await connectAccount({...account, vault: "second", mode: "create"});
+    await assert.rejects(login({...account, password: "wrong-password"}), /密码错误/);
+    const otherVault = await connectAccount({...account, vault: "second", mode: "create", ticket: await checkInvite(account.invite), vaultCode: generateVaultCode()});
     assert.notEqual(first.key, otherVault.key);
     await assert.rejects(requestCode({...account, account: "duplicate-email", email: "OWNER@example.com"}), /邮箱已/);
     const friendAccount = {...account, account: "pilot-friend", email: "friend@example.com"};
     assert.equal((await requestCode(friendAccount)).status, "verification_required");
     assert.equal((await confirmEmail(friendAccount, mail())).status, "approval_pending");
     accountAdmin("approve-registration", "pilot-friend");
-    const otherAccount = await connectAccount({...friendAccount, mode: "login"});
+    const otherAccount = await login(friendAccount);
     const pluginCipher = await require("./plugin/engine").cryptography(first.key);
     const context = "blueee-notes-plugin-list-v1";
     const payload = JSON.stringify([{id: "obsidian-excalidraw-plugin", name: "Excalidraw", version: "2.0.0", enabled: true}]);
@@ -140,6 +147,10 @@ with ThreadingHTTPServer(("127.0.0.1", 0), handler(path)) as server:
     await assert.rejects(requester(first.token)("GET", "/v1/manifest"), /401/);
     await assert.rejects(requester(second.token)("GET", "/v1/plugin-list"), /401/);
     assert.deepEqual(await requester(otherAccount.token)("GET", "/v1/manifest"), []);
+    assert(outbound.every(body => !body.includes(account.vaultCode) && !body.includes(account.password)));
+    accountAdmin("close-registration");
+    assert.equal((await login(friendAccount)).key, otherAccount.key);
+    await assert.rejects(requestCode({...friendAccount, account: "closed-owner", email: "closed@example.com"}), /关闭|开放/);
     const ownerRequest = requester(owner);
     const key = secret();
     const a = device(key, ownerRequest, {"随手记.md": "hello", "工作/A.md": "office", "工作/sub/B.png": "image", "其他/X.md": "outside"});

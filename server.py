@@ -373,7 +373,7 @@ def main():
             if args.command == "set-registration-invite":
                 accounts.set_invite(db, sys.stdin.readline(258).rstrip("\r\n") if args.stdin else None)
             elif args.command == "close-registration":
-                db.execute("DELETE FROM server_settings WHERE name='registration_invite'")
+                db.execute("INSERT OR IGNORE INTO server_settings VALUES ('registration_closed','1')")
             elif args.command == "list-accounts":
                 for name, disabled in db.execute("SELECT name,disabled FROM account_credentials ORDER BY name"):
                     print(f"{name}\t{'disabled' if disabled else 'active'}")

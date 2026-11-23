@@ -9,7 +9,7 @@ const ERRORS = {
     invalid_request: "账号或远端仓库名需要 3–40 个小写字母、数字、横线或下划线。",
     registration_closed: "服务器还没有开放注册，请联系管理员。",
     invite_invalid: "注册口令错误或已更换。",
-    invite_step_required: "注册口令验证已过期，请重新输入口令。",
+    invite_step_required: "口令验证已过期，请重新输入口令。",
     email_invalid: "请输入有效的邮箱地址。",
     registration_conflict: "该账号名或邮箱已用于其他注册，请联系管理员。",
     mail_unavailable: "验证码发送失败，请联系管理员检查发件邮箱。",
@@ -34,8 +34,19 @@ async function accountKeys(username, password) {
     return {proof: encode64(new Uint8Array(bits.slice(0, 32))), wrap};
 }
 
-function wrappingContext(account, vault, salt) {
-    return encoder.encode("blueee-notes-vault-key-v1:" + account + ":" + vault + ":" + salt);
+function wrappingContext(account, vault, salt, version) {
+    return encoder.encode("blueee-notes-vault-key-" + version + ":" + account + ":" + vault + ":" + salt);
+}
+
+function generateVaultCode() {
+    return encode64(crypto.getRandomValues(new Uint8Array(32)));
+}
+
+async function privateWrappingKey(code) {
+    if (!/^[A-Za-z0-9+/]{43}=$/.test(code ?? "")) {
+        throw Error("请输入这套仓库的 44 位加密密钥，或先生成并保存一份。");
+    }
+    return crypto.subtle.importKey("raw", decode64(code), "AES-GCM", false, ["encrypt", "decrypt"]);
 }
 
 async function accountRequest(data) {
@@ -59,46 +70,56 @@ async function checkInvite(invite) {
     return ticket;
 }
 
-async function connectAccount({mode, account, vault, password, ticket, email, code}) {
+async function connectAccount({mode, account, vault, password, ticket, email, code, vaultCode}) {
     account = account.toLowerCase();
     if (!NAME.test(account) || !NAME.test(vault)) throw Error(ERRORS.invalid_request);
     if (password.length < 6 || password.length > 256) throw Error("请输入 6–256 个字符的密码。");
     const {proof, wrap} = await accountKeys(account, password);
-    const data = {mode, account, vault, proof};
+    const data = {mode, account, vault, proof, ticket};
     if (mode === "register" || mode === "verify") {
         data.email = (email ?? "").trim().toLowerCase();
         if (!data.email || !data.email.includes("@")) throw Error(ERRORS.email_invalid);
     }
-    if (mode === "register") data.ticket = ticket;
     if (mode === "verify") data.code = code;
     if (mode === "register" || mode === "create") {
+        const privateKey = await privateWrappingKey(vaultCode);
         const key = crypto.getRandomValues(new Uint8Array(32));
         const salt = encode64(crypto.getRandomValues(new Uint8Array(16)));
         const nonce = crypto.getRandomValues(new Uint8Array(12));
         const encrypted = await crypto.subtle.encrypt({
-            name: "AES-GCM", iv: nonce, additionalData: wrappingContext(account, vault, salt),
-        }, wrap, key);
-        data.wrappedKey = [salt, encode64(nonce), encode64(new Uint8Array(encrypted))].join(".");
+            name: "AES-GCM", iv: nonce, additionalData: wrappingContext(account, vault, salt, "v2"),
+        }, privateKey, key);
+        data.wrappedKey = ["v2", salt, encode64(nonce), encode64(new Uint8Array(encrypted))].join(".");
     }
     const result = await accountRequest(data);
     if (result.status) return result;
     const {token, wrappedKey} = result;
     if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw Error("登录服务返回无效会话。");
-    const [salt, nonce, ciphertext] = wrappedKey.split(".");
-    const key = await crypto.subtle.decrypt({
-        name: "AES-GCM", iv: decode64(nonce), additionalData: wrappingContext(account, vault, salt),
-    }, wrap, decode64(ciphertext));
+    const pair = {url: SERVICE, token, account, vault};
+    const parts = wrappedKey.split(".");
+    const version = parts.length === 4 ? parts.shift() : "v1";
+    const [salt, nonce, ciphertext] = parts;
+    const privateKey = version === "v2" ? await privateWrappingKey(vaultCode) : wrap;
+    let key;
+    try {
+        key = await crypto.subtle.decrypt({
+            name: "AES-GCM", iv: decode64(nonce), additionalData: wrappingContext(account, vault, salt, version),
+        }, privateKey, decode64(ciphertext));
+    } catch {
+        throw Error("仓库的加密密钥不正确。");
+    }
     if (key.byteLength !== 32) throw Error("仓库密钥无效。");
-    return {url: SERVICE, token, key: encode64(new Uint8Array(key)), account, vault};
+    return {...pair, key: encode64(new Uint8Array(key))};
 }
 
 function accountForm(parent, plugin, done) {
     const pair = plugin.state.pair;
     const lockedVault = Boolean(pair?.account);
     const root = parent.createEl("form", {cls: "simple-note-sync-account"});
-    let step = "login";
+    let step = "invite";
     let ticket;
     let action;
+    const actions = new Setting(root).setName("账号操作");
     const fields = new Map();
     const buttons = {
         login: "连接 Blueee Notes", create: "新建并连接", invite: "验证口令",
@@ -115,19 +136,23 @@ function accountForm(parent, plugin, done) {
         for (const field of fields.values()) show(field, visibleDetails);
         show(email, step === "register" || step === "resume");
         show(invite, step === "invite");
+        actions.settingEl.hidden = step === "invite";
+        const needsKey = ["login", "register", "create"].includes(step);
+        show(vaultCode, needsKey);
+        vaultCode.input.required = needsKey && step !== "login";
+        generate.buttonEl.hidden = step !== "register" && step !== "create";
         show(code, step === "verify" || step === "resume");
         submit.setText(buttons[step]);
     };
-    new Setting(root).setName("账号操作").addDropdown(field => {
+    actions.addDropdown(field => {
         action = field;
         field.addOption("login", "登录并连接已有仓库");
         if (!lockedVault) {
-            field.addOption("invite", "用口令注册");
+            field.addOption("register", "注册新账号");
             field.addOption("resume", "继续验证已申请的邮箱");
             field.addOption("create", "已有账号，新建远端仓库");
         }
         field.onChange(next => {
-            ticket = undefined;
             feedback.empty();
             setStep(next);
         });
@@ -172,9 +197,28 @@ function accountForm(parent, plugin, done) {
         input.type = "password";
         input.autocomplete = "off";
     });
+    const vaultCode = addField("仓库加密密钥", input => {
+        input.type = "password";
+        input.autocomplete = "off";
+    });
+    vaultCode.row.setDesc("新仓库请生成并保存。换设备时需要同一份，服务器没有副本。");
+    let generate;
+    vaultCode.row.addButton(button => {
+        generate = button.setButtonText("生成并复制").onClick(async () => {
+            vaultCode.input.value = generateVaultCode();
+            try {
+                await navigator.clipboard.writeText(vaultCode.input.value);
+                feedback.setText("已复制仓库密钥，请保存后再继续。");
+            } catch {
+                vaultCode.input.type = "text";
+                vaultCode.input.select();
+                feedback.setText("请手动复制并妥善保存仓库密钥。");
+            }
+        });
+    });
     const feedback = root.createDiv({cls: "simple-note-sync-status", attr: {role: "status"}});
     const submit = root.createEl("button", {text: "连接 Blueee Notes", cls: "mod-cta", attr: {type: "submit"}});
-    setStep("login");
+    setStep("invite");
     const value = id => fields.get(id).input.value;
     root.addEventListener("submit", async event => {
         event.preventDefault();
@@ -186,8 +230,9 @@ function accountForm(parent, plugin, done) {
             if (step === "invite") {
                 ticket = await checkInvite(invite.input.value);
                 invite.input.value = "";
-                setStep("register");
-                feedback.setText("口令正确，请填写账号、密码和邮箱。");
+                action.setValue("login");
+                setStep("login");
+                feedback.setText("口令正确，可以选择注册或登录。");
                 fields.get("account").input.focus();
                 return;
             }
@@ -199,13 +244,13 @@ function accountForm(parent, plugin, done) {
                 ticket,
                 email: email.input.value,
                 code: code.input.value.trim(),
+                vaultCode: vaultCode.input.value.trim(),
             });
             if (result === "verification_required") {
                 setStep("verify");
                 feedback.setText("验证码已发送到 " + email.input.value + "，请在这里输入，有效期 15 分钟。");
                 code.input.focus();
             } else if (result === "approval_pending") {
-                ticket = undefined;
                 fields.get("password").input.value = code.input.value = "";
                 action.setValue("login");
                 setStep("login");
@@ -229,4 +274,4 @@ function accountForm(parent, plugin, done) {
     });
 }
 
-module.exports = {accountForm, checkInvite, connectAccount};
+module.exports = {accountForm, checkInvite, connectAccount, generateVaultCode};
