@@ -8,6 +8,7 @@ import json
 import smtplib
 import ssl
 from email.message import EmailMessage
+from html import escape
 from pathlib import Path
 import threading
 import time
@@ -79,10 +80,43 @@ def send_code(path, recipient, code):
     message["From"], message["To"] = config["address"], recipient
     message["Subject"] = "Blueee Notes 邮箱验证码"
     message.set_content(
-        "欢迎来到blueee的笔记同步小插件🥰。这是一款个人制作的插件，用来方便的同步多设备的笔记，"
-        "后续功能还有待开发喔～这里是验证码，核对成功后，再等作者同意用户的创建，就能使用啦！"
-        f"\n\n验证码：{code}\n有效期：15 分钟\n"
+        "欢迎来到 Blueee Notes 🥰\n\n"
+        "这是我做的一个笔记同步小插件，方便你在电脑、手机和平板上接着写。"
+        "后续功能也会慢慢加上。\n\n"
+        f"邮箱验证码：{code}\n有效期：15 分钟\n\n"
+        "请回到 Obsidian 的 Blueee Notes 设置输入验证码。"
+        "邮箱验证通过后，等作者审核你的账号申请，即可开始同步。"
     )
+    safe_code = escape(code)
+    message.add_alternative(f"""<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="margin:0;background:#f4f1f9;color:#272338;font-family:Arial,'PingFang SC','Microsoft YaHei',sans-serif">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f1f9">
+<tr><td align="center" style="padding:28px 12px">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0"
+ style="max-width:520px;background:#ffffff;border:1px solid #e9e1f2;border-radius:16px">
+<tr><td style="padding:28px 24px 4px;font-size:15px;font-weight:bold;color:#6640a6">Blueee Notes</td></tr>
+<tr><td style="padding:0 24px;font-size:16px;line-height:1.7">
+<h1 style="margin:8px 0 12px;color:#272338;font-size:26px;line-height:1.35">欢迎来同步你的笔记 🥰</h1>
+<p style="margin:0 0 20px">这是我做的一个笔记同步小插件，方便你在电脑、手机和平板上接着写。后续功能也会慢慢加上。</p>
+</td></tr>
+<tr><td style="padding:0 24px">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0"
+ style="background:#f0e9fa;border:1px solid #e6d9f5;border-radius:12px">
+<tr><td align="center" style="padding:16px 6px 0;font-size:14px;font-weight:bold;color:#54337b">邮箱验证码</td></tr>
+<tr><td align="center" style="padding:3px 4px;color:#301a51;font-size:38px;font-weight:bold;
+ font-family:Consolas,monospace;letter-spacing:5px;line-height:1.3">{safe_code}</td></tr>
+<tr><td align="center" style="padding:3px 8px 16px;font-size:13px;color:#54337b">15 分钟内有效</td></tr>
+</table>
+</td></tr>
+<tr><td style="padding:20px 24px 28px;font-size:15px;line-height:1.7;color:#433951">
+<p style="margin:0">回到 Obsidian 的 Blueee Notes 设置输入验证码。邮箱验证通过后，等作者审核你的账号申请，就可以开始同步啦！</p>
+</td></tr>
+</table>
+</td></tr>
+</table>
+</body></html>""", subtype="html")
     context = ssl.create_default_context()
     smtp = smtplib.SMTP_SSL if config["port"] == 465 else smtplib.SMTP
     options = {"context": context} if config["port"] == 465 else {}
