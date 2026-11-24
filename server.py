@@ -126,7 +126,23 @@ def handler(path):
                 JOIN account_credentials a ON a.name=v.account
                 WHERE s.token_hash=? AND s.expires>? AND a.disabled=0
             """, (token_hash(value[7:]), int(time.time()))).fetchone()
+            if row:
+                session = self.device_session(db)
+                if session:
+                    now = int(time.time())
+                    db.execute("UPDATE account_devices SET last_seen=? WHERE account=? AND id=? AND last_seen<?",
+                               (now, *session, now-60))
             return row[0] if row else None
+
+        def device_session(self, db):
+            token = self.headers.get("Authorization", "")
+            if not re.fullmatch(r"Bearer [A-Za-z0-9_-]{43}", token):
+                return None
+            return db.execute("""SELECT d.account,d.device FROM device_sessions d
+                JOIN account_sessions s ON s.token_hash=d.token_hash
+                JOIN account_credentials a ON a.name=d.account
+                WHERE d.token_hash=? AND s.expires>? AND a.disabled=0
+            """, (token_hash(token[7:]), int(time.time()))).fetchone()
 
         def do_GET(self):
             url = urlsplit(self.path)
@@ -135,6 +151,34 @@ def handler(path):
                 vault = self.authorize(db)
                 if vault is None:
                     self.reply(401, {"error": "unauthorized"})
+                    return
+                if route == "/v1/account/profile":
+                    current = self.device_session(db)
+                    if not current:
+                        self.reply(401, {"error": "unauthorized"})
+                        return
+                    name = current[0]
+                    email = db.execute("SELECT email FROM registrations WHERE name=? AND state='approved'",
+                                       (name,)).fetchone()
+                    rows = db.execute("SELECT slug FROM account_vaults WHERE account=? ORDER BY slug", (name,))
+                    self.reply(200, {"name": name, "email": email[0] if email else None,
+                                     "vaults": [slug for (slug,) in rows]})
+                    return
+                if route == "/v1/account/devices":
+                    current = self.device_session(db)
+                    if not current:
+                        self.reply(401, {"error": "unauthorized"})
+                        return
+                    name, device = current
+                    now = int(time.time())
+                    rows = db.execute("""SELECT d.id,d.label,d.first_seen,d.last_seen,
+                      EXISTS(SELECT 1 FROM device_sessions ds JOIN account_sessions ss
+                        ON ss.token_hash=ds.token_hash WHERE ds.account=d.account
+                        AND ds.device=d.id AND ss.expires>?)
+                      FROM account_devices d WHERE d.account=? ORDER BY d.last_seen DESC""", (now,name))
+                    self.reply(200, [{"id": key, "name": label, "firstSeen": first, "lastSeen": last,
+                                      "current": key == device, "active": bool(active)}
+                                     for key,label,first,last,active in rows])
                     return
                 if route == "/v1/plugin-list":
                     row = db.execute("SELECT encrypted_list FROM plugin_lists WHERE vault=?", (vault,)).fetchone()
@@ -184,6 +228,74 @@ def handler(path):
                     return
                 status, result = accounts.connect(database, path, body, token_hash)
                 self.reply(status, result if status in (200, 202) else {"error": result})
+                return
+            if route == "/v1/account/upgrade-wrap":
+                try:
+                    size = int(self.headers.get("Content-Length", "0"))
+                    if not 0 < size <= 512:
+                        raise ValueError
+                    data = json.loads(self.rfile.read(size))
+                    previous, wrapped = data["previous"], data["wrapped"]
+                    if (not accounts.WRAPPED_KEY.fullmatch(previous) or not previous.startswith("v2.")
+                        or not accounts.WRAPPED_KEY.fullmatch(wrapped) or wrapped.startswith("v2.")):
+                        raise ValueError
+                except (ValueError, KeyError, TypeError, RecursionError):
+                    self.reply(400, {"error": "invalid_request"})
+                    return
+                with database(path) as db:
+                    db.execute("BEGIN IMMEDIATE")
+                    current = self.device_session(db)
+                    vault = self.authorize(db)
+                    if not current or not vault:
+                        self.reply(401, {"error": "unauthorized"})
+                        return
+                    result = db.execute("""UPDATE account_vaults SET wrapped_key=?
+                        WHERE account=? AND vault=? AND wrapped_key=?""", (wrapped,current[0],vault,previous))
+                    if not result.rowcount:
+                        self.reply(409, {"error": "revision changed"})
+                        return
+                self.reply(200, {"ok": True})
+                return
+            if route == "/v1/account/password":
+                with database(path) as db:
+                    current = self.device_session(db)
+                if not current:
+                    self.reply(401, {"error": "unauthorized"})
+                    return
+                try:
+                    size = int(self.headers.get("Content-Length", "0"))
+                    if not 0 < size <= 256 * 1024:
+                        raise ValueError
+                    body = json.loads(self.rfile.read(size))
+                except (ValueError, RecursionError):
+                    self.reply(400, {"error": "invalid_request"})
+                    return
+                status, result = accounts.change_password(database, path, current, body)
+                self.reply(status, result if status == 200 else {"error": result})
+                return
+            if route == "/v1/account/devices/revoke":
+                try:
+                    size = int(self.headers.get("Content-Length", "0"))
+                    if not 0 < size <= 120:
+                        raise ValueError
+                    device = json.loads(self.rfile.read(size))["id"]
+                    if not ID.fullmatch(device):
+                        raise ValueError
+                except (KeyError, TypeError, ValueError, RecursionError):
+                    self.reply(400, {"error": "invalid_request"})
+                    return
+                with database(path) as db:
+                    db.execute("BEGIN IMMEDIATE")
+                    current = self.device_session(db)
+                    if not current:
+                        self.reply(401, {"error": "unauthorized"})
+                        return
+                    name = current[0]
+                    db.execute("""DELETE FROM account_sessions WHERE token_hash IN
+                        (SELECT token_hash FROM device_sessions WHERE account=? AND device=?)""", (name,device))
+                    db.execute("DELETE FROM device_codes WHERE account=? AND device=?", (name,device))
+                    db.execute("DELETE FROM account_devices WHERE account=? AND id=?", (name,device))
+                self.reply(200, {"ok": True})
                 return
             if route == "/v1/plugin-list":
                 self.save_plugin_list()
@@ -313,6 +425,7 @@ def main():
     invite.add_argument("--stdin", action="store_true")
     commands.add_parser("close-registration")
     commands.add_parser("list-accounts")
+    commands.add_parser("account-details")
     commands.add_parser("list-registrations")
     commands.add_parser("set-smtp")
     commands.add_parser("mail-status")
@@ -359,6 +472,13 @@ def main():
         temporary.write_text(json.dumps(config), encoding="utf-8")
         temporary.chmod(0o600)
         temporary.replace(destination)
+    elif args.command == "account-details":
+        with database(path) as db:
+            rows = db.execute("""SELECT a.name, r.email, a.disabled
+                FROM account_credentials a LEFT JOIN registrations r
+                  ON r.name=a.name AND r.state='approved' ORDER BY a.name""")
+            print(json.dumps([{"name": name, "email": email, "disabled": bool(disabled)}
+                              for name,email,disabled in rows]))
     elif args.command == "list-registrations":
         with database(path) as db:
             print(json.dumps(list(db.execute("""

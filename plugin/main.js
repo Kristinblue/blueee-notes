@@ -1,7 +1,7 @@
 const {Plugin, PluginSettingTab, Setting, Modal, FuzzySuggestModal, MarkdownView, TFile, TFolder, Notice, requestUrl, setIcon} = require("obsidian");
 const {CONFLICTS, decode64, validPath, synchronize, inspectConflict, resolveConflict} = require("./engine");
 const {ConflictPicker} = require("./conflicts");
-const {accountForm, connectAccount} = require("./account");
+const {accountForm, connectAccount, PasswordChange} = require("./account");
 const {PluginList} = require("./plugin-list");
 
 const DIRECTIONS = {
@@ -202,6 +202,54 @@ function parsePair(value) {
     return {url: url.href.replace(/\/$/, ""), token: config.token, key: config.key};
 }
 
+class DeviceList extends Modal {
+    constructor(app, plugin) {
+        super(app);
+        this.plugin = plugin;
+    }
+
+    async onOpen() {
+        this.setTitle("我的设备");
+        const pair = this.plugin.state.pair;
+        const status = this.contentEl.createDiv({attr: {role: "status"}});
+        status.setText("正在读取设备…");
+        try {
+            const rows = await this.plugin.request(pair, "GET", "/v1/account/devices");
+            status.setText(rows.length + " 台已验证设备");
+            for (const device of rows) {
+                const setting = new Setting(this.contentEl)
+                    .setName(device.name + (device.current ? "（当前设备）" : ""))
+                    .setDesc("首次登录 " + new Date(device.firstSeen * 1000).toLocaleString()
+                        + " · 最近活动 " + new Date(device.lastSeen * 1000).toLocaleString()
+                        + (device.active ? " · 会话有效" : " · 会话已过期"));
+                if (!device.current) setting.addButton(button => {
+                    let confirm = false;
+                    button.setButtonText("退出设备").onClick(async () => {
+                        if (!confirm) {
+                            confirm = true;
+                            button.setButtonText("确认退出");
+                            return;
+                        }
+                        button.setDisabled(true);
+                        try {
+                            await this.plugin.request(pair, "POST", "/v1/account/devices/revoke", {id: device.id});
+                            setting.settingEl.remove();
+                            status.setText("设备已退出，下次登录须验证邮箱。");
+                        } catch (error) {
+                            status.setText(error.message);
+                            button.setDisabled(false);
+                        }
+                    });
+                });
+            }
+        } catch (error) {
+            status.setText(error.message);
+        }
+    }
+
+    onClose() { this.contentEl.empty(); }
+}
+
 class PairSettings extends PluginSettingTab {
     constructor(app, plugin) {
         super(app, plugin);
@@ -216,7 +264,7 @@ class PairSettings extends PluginSettingTab {
         setIcon(icon, connected ? "link" : "link-2-off");
         const connection = summary.createDiv();
         connection.createEl("strong", {text: connected ? "已配对" : "连接同步仓库"});
-        connection.createDiv({text: connected ? this.app.vault.getName() : "使用管理员发给你的配对配置"});
+        connection.createDiv({text: connected ? this.app.vault.getName() : "先验证口令，再登录或注册账号"});
 
         const account = this.plugin.state.pair?.account;
         if (connected) {
@@ -227,6 +275,34 @@ class PairSettings extends PluginSettingTab {
                 }));
         }
         if (account) {
+            const pair = this.plugin.state.pair;
+            const profile = new Setting(this.containerEl).setName("账号与仓库").setDesc(pair.account + " · " + pair.vault);
+            profile.addButton(button => button.setButtonText("查看账号").onClick(async () => {
+                button.setDisabled(true);
+                try {
+                    const data = await this.plugin.request(pair, "GET", "/v1/account/profile");
+                    const view = new Modal(this.app);
+                    view.setTitle("账号与仓库");
+                    view.contentEl.createEl("p", {text: data.name + (data.email ? " · " + data.email : "")});
+                    const list = view.contentEl.createEl("ul");
+                    for (const name of data.vaults) {
+                        list.createEl("li", {text: name + (name === pair.vault ? "（当前仓库）" : "")});
+                    }
+                    view.open();
+                } catch (error) {
+                    new Notice(error.message);
+                } finally {
+                    button.setDisabled(false);
+                }
+            }));
+            new Setting(this.containerEl).setName("账号密码")
+                .addButton(button => button.setButtonText("修改密码").onClick(() => {
+                    new PasswordChange(this.app, this.plugin).open();
+                }));
+            new Setting(this.containerEl).setName("我的设备")
+                .addButton(button => button.setButtonText("查看设备").onClick(() => {
+                    new DeviceList(this.app, this.plugin).open();
+                }));
             const details = this.containerEl.createEl("details");
             details.createEl("summary", {text: "更新账号登录"});
             accountForm(details, this.plugin, () => this.display());
@@ -342,9 +418,10 @@ module.exports = class SimpleNoteSync extends Plugin {
             || values.mode !== "login")) throw Error("请在新的本地仓库中连接另一个远端仓库。");
         this.busy = true;
         try {
-            const pair = await connectAccount(values);
+            const {legacyWrap, ...pair} = await connectAccount({...values, existingKey: current?.key ?? values.existingKey});
             if (pair.status) return pair.status;
             if (current && current.key !== pair.key) throw Error("远端仓库密钥已变更，无法安全重新连接。");
+            if (legacyWrap) await this.request(pair, "POST", "/v1/account/upgrade-wrap", legacyWrap);
             await this.saveData({...this.state, pair});
             this.state.pair = pair;
         } finally {

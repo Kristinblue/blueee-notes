@@ -218,15 +218,25 @@ class Manager:
                         lambda _: self.status.set("注册已关闭。"))
 
     def list_accounts(self):
-        self.submit(("list-accounts",), "正在读取账号…",
-                    lambda output: self.show_accounts(output))
+        self.submit(("account-details",), "正在读取账号…", self.show_accounts)
 
     def show_accounts(self, output):
-        entries = [row.split("\t", 1) for row in output.splitlines()]
+        entries = json.loads(output)
         self.status.set(f"{len(entries)} 个注册账号")
-        listing = "\n".join(f"{name}（{'停用' if state == 'disabled' else '正常'}）"
-                            for name, state in entries)
-        messagebox.showinfo("注册账号", listing or "还没有注册账号。", parent=self.window)
+        panel = tk.Toplevel(self.window)
+        panel.title("注册账号")
+        panel.geometry("620x330")
+        listing = ttk.Treeview(panel, columns=("name", "email", "state"), show="headings")
+        listing.heading("name", text="用户名")
+        listing.heading("email", text="已验证邮箱")
+        listing.heading("state", text="状态")
+        listing.column("name", width=160)
+        listing.column("email", width=300)
+        listing.column("state", width=100)
+        listing.pack(fill="both", expand=True, padx=12, pady=12)
+        for entry in entries:
+            listing.insert("", "end", values=(entry["name"], entry["email"] or "未记录",
+                                              "停用" if entry["disabled"] else "正常"))
 
     def change_account(self):
         name = simpledialog.askstring("停用／启用账号", "请输入注册账号名", parent=self.window)

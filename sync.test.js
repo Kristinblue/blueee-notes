@@ -47,7 +47,7 @@ path = sys.argv[1]
 init(path)
 with database(path) as db:
     accounts.set_invite(db, "local-invite-only")
-accounts.send_code = lambda path, recipient, code: Path(path).with_suffix(".mail").write_text(code, encoding="ascii")
+accounts.send_code = lambda path, recipient, code, purpose="register": Path(path).with_suffix(".mail").write_text(code, encoding="ascii")
 owner = grant(path, "owner", "primary")
 friend = grant(path, "friend", "private")
 shared = grant(path, "friend", "primary")
@@ -80,6 +80,7 @@ with ThreadingHTTPServer(("127.0.0.1", 0), handler(path)) as server:
     vm.runInNewContext(fs.readFileSync(join(__dirname, "plugin/account.js"), "utf8"), {
         module: localAccount, crypto, TextEncoder,
         require: name => name === "obsidian" ? {
+            Modal: class {},
             requestUrl: async options => {
                 outbound.push(options.body);
                 const response = await fetch(`http://127.0.0.1:${port}/v1/account/connect`, {
@@ -89,10 +90,10 @@ with ThreadingHTTPServer(("127.0.0.1", 0), handler(path)) as server:
             },
         } : require("./plugin/engine"),
     });
-    const {checkInvite, connectAccount, generateVaultCode} = localAccount.exports;
+    const {checkInvite, connectAccount, generateVaultCode, accountKeys, wrappingContext} = localAccount.exports;
     const account = {
-        account: "Pilot-Owner", vault: "main", password: "test-6", invite: "local-invite-only",
-        email: "owner@example.com", vaultCode: generateVaultCode(),
+        account: "Pilot-Owner", vault: "main", password: "test-Password93!", invite: "local-invite-only",
+        email: "owner@example.com", vaultCode: generateVaultCode(), device: generateVaultCode(), deviceName: "Windows",
     };
     const accountAdmin = (...args) => execFileSync(python, ["server.py", "--db", join(dir, "pilot.sqlite3"), ...args],
         {encoding: "utf8"});
@@ -122,12 +123,41 @@ with ThreadingHTTPServer(("127.0.0.1", 0), handler(path)) as server:
     accountAdmin("approve-registration", "pilot-owner");
     const first = await login(account);
     const second = await login(account);
-    await assert.rejects(login({...account, vaultCode: generateVaultCode()}), /加密密钥不正确/);
+    const secondAccountDevice = {...account, device: generateVaultCode(), deviceName: "iPad"};
+    assert.equal((await login(secondAccountDevice)).status, "device_verification_required");
+    const mobile = await login({...secondAccountDevice, code: mail()});
+    assert.equal(first.key, mobile.key);
+    assert.deepEqual(await requester(first.token)("GET", "/v1/account/profile"),
+        {name: "pilot-owner", email: "owner@example.com", vaults: ["main"]});
+    const devices = await requester(first.token)("GET", "/v1/account/devices");
+    assert.equal(devices.length, 2);
+    const mobileDevice = devices.find(device => device.name === "iPad");
+    await requester(first.token)("POST", "/v1/account/devices/revoke", {id: mobileDevice.id});
+    await assert.rejects(requester(mobile.token)("GET", "/v1/manifest"), /401/);
     assert.equal(first.key, second.key);
     assert.notEqual(first.token, second.token);
     await assert.rejects(login({...account, password: "wrong-password"}), /密码错误/);
     const otherVault = await connectAccount({...account, vault: "second", mode: "create", ticket: await checkInvite(account.invite), vaultCode: generateVaultCode()});
     assert.notEqual(first.key, otherVault.key);
+    const legacyKey = generateVaultCode();
+    const saltForLegacy = encode64(crypto.getRandomValues(new Uint8Array(16)));
+    const nonceForLegacy = crypto.getRandomValues(new Uint8Array(12));
+    const legacyWrapper = await crypto.subtle.importKey("raw", Buffer.from(legacyKey, "base64"), "AES-GCM", false, ["encrypt"]);
+    const sealedLegacy = await crypto.subtle.encrypt({name:"AES-GCM", iv:nonceForLegacy,
+        additionalData:wrappingContext("pilot-owner","main",saltForLegacy,"v2")}, legacyWrapper,
+        Buffer.from(first.key,"base64"));
+    const priorEnvelope = ["v2",saltForLegacy,encode64(nonceForLegacy),encode64(new Uint8Array(sealedLegacy))].join(".");
+    execFileSync(python, ["-c", `import sqlite3,sys
+with sqlite3.connect(sys.argv[1]) as db:
+    db.execute("UPDATE account_vaults SET wrapped_key=? WHERE account='pilot-owner' AND slug='main'", (sys.argv[2],))
+`, join(dir,"pilot.sqlite3"), priorEnvelope]);
+    await assert.rejects(login(account), /首次连接旧仓库/);
+    await assert.rejects(login({...account, legacyCode:generateVaultCode()}), /密钥不正确/);
+    const migrated = await login({...account, legacyCode:legacyKey});
+    assert.equal(migrated.key, first.key);
+    await requester(migrated.token)("POST", "/v1/account/upgrade-wrap", migrated.legacyWrap);
+    assert.equal((await login(account)).key, first.key);
+
     await assert.rejects(requestCode({...account, account: "duplicate-email", email: "OWNER@example.com"}), /邮箱已/);
     const friendAccount = {...account, account: "pilot-friend", email: "friend@example.com"};
     assert.equal((await requestCode(friendAccount)).status, "verification_required");
@@ -151,6 +181,24 @@ with ThreadingHTTPServer(("127.0.0.1", 0), handler(path)) as server:
     accountAdmin("close-registration");
     assert.equal((await login(friendAccount)).key, otherAccount.key);
     await assert.rejects(requestCode({...friendAccount, account: "closed-owner", email: "closed@example.com"}), /关闭|开放/);
+    const friendName = friendAccount.account;
+    const oldKeys = await accountKeys(friendName, friendAccount.password);
+    const changedPassword = "Another-Test-Password72!";
+    const newKeys = await accountKeys(friendName, changedPassword);
+    const friendRequest = requester(otherAccount.token);
+    const prepared = await friendRequest("POST", "/v1/account/password", {mode:"prepare", oldProof:oldKeys.proof});
+    const before = prepared.vaults.main;
+    const [salt] = before.split(".");
+    const nonce = crypto.getRandomValues(new Uint8Array(12));
+    const encryptedKey = await crypto.subtle.encrypt({name:"AES-GCM", iv:nonce,
+        additionalData:wrappingContext(friendName,"main",salt,"v1")}, newKeys.wrap,
+        new Uint8Array(Buffer.from(otherAccount.key,"base64")));
+    const updated = [salt,encode64(nonce),encode64(new Uint8Array(encryptedKey))].join(".");
+    assert.deepEqual(await friendRequest("POST", "/v1/account/password", {mode:"commit", oldProof:oldKeys.proof,
+        newProof:newKeys.proof, code:mail(), vaults:{main:{old:before,new:updated}}}), {ok:true});
+    await assert.rejects(friendRequest("GET", "/v1/manifest"), /401/);
+    assert.equal((await login({...friendAccount,password:changedPassword})).key, otherAccount.key);
+
     const ownerRequest = requester(owner);
     const key = secret();
     const a = device(key, ownerRequest, {"随手记.md": "hello", "工作/A.md": "office", "工作/sub/B.png": "image", "其他/X.md": "outside"});
