@@ -41,15 +41,58 @@ class Manager:
         self.users = []
         self.vaults = []
         self.window.title("笔记同步管理")
-        self.window.geometry("690x520")
-        self.window.minsize(570, 440)
-        frame = ttk.Frame(window, padding=22)
+        self.window.geometry("780x600")
+        self.window.minsize(660, 520)
+        frame = ttk.Frame(window, padding=18)
         frame.pack(fill="both", expand=True)
         ttk.Label(frame, text="笔记同步管理", font=("Microsoft YaHei UI", 17, "bold")).pack(anchor="w")
         self.status = tk.StringVar(value="正在连接 blueee-server…")
-        ttk.Label(frame, textvariable=self.status, wraplength=530).pack(anchor="w", pady=(5, 15))
+        ttk.Label(frame, textvariable=self.status, wraplength=660).pack(anchor="w", pady=(5, 10))
         self.actions = []
-        selectors = ttk.Frame(frame)
+        notebook = ttk.Notebook(frame)
+        notebook.pack(fill="both", expand=True)
+        account_tab = ttk.Frame(notebook, padding=12)
+        legacy_tab = ttk.Frame(notebook, padding=12)
+        notebook.add(account_tab, text="账号管理")
+        notebook.add(legacy_tab, text="旧版配对")
+        self.build_accounts(account_tab)
+        self.build_legacy(legacy_tab)
+        self.window.protocol("WM_DELETE_WINDOW", self.close)
+        self.refresh()
+
+    def build_accounts(self, parent):
+        ttk.Label(parent, text="新账号注册、审批与账号状态。", wraplength=680).pack(anchor="w")
+        buttons = ttk.Frame(parent)
+        buttons.pack(fill="x", pady=(10, 8))
+        for label, action in (
+            ("设置注册口令", self.set_invite),
+            ("关闭注册", self.close_registration),
+            ("查看注册账号", self.list_accounts),
+            ("停用／启用账号", self.change_account),
+            ("配置发信邮箱", self.configure_smtp),
+        ):
+            self.button(buttons, label, action).pack(side="left", padx=(0, 8))
+        ttk.Label(parent, text="待审批注册（只有已验证邮箱的申请会出现）").pack(anchor="w", pady=(10, 4))
+        listing = ttk.Frame(parent)
+        listing.pack(fill="both", expand=True)
+        self.pending = ttk.Treeview(listing, columns=("name", "email"), show="headings",
+                                    selectmode="browse", height=8)
+        self.pending.heading("name", text="用户名")
+        self.pending.heading("email", text="已验证邮箱")
+        self.pending.column("name", width=180)
+        self.pending.column("email", width=420)
+        self.pending.pack(side="left", fill="both", expand=True)
+        scrollbar = ttk.Scrollbar(listing, orient="vertical", command=self.pending.yview)
+        scrollbar.pack(side="right", fill="y")
+        self.pending.configure(yscrollcommand=scrollbar.set)
+        controls = ttk.Frame(parent)
+        controls.pack(fill="x", pady=(8, 0))
+        self.button(controls, "刷新待审批", self.refresh_registrations).pack(side="left", padx=(0, 8))
+        self.button(controls, "批准", lambda: self.decide(True)).pack(side="left", padx=(0, 8))
+        self.button(controls, "拒绝", lambda: self.decide(False)).pack(side="left")
+
+    def build_legacy(self, parent):
+        selectors = ttk.Frame(parent)
         selectors.pack(fill="x", pady=(0, 12))
         selectors.columnconfigure((0, 2), weight=1)
         ttk.Label(selectors, text="用户").grid(row=0, column=0, sticky="w")
@@ -60,9 +103,10 @@ class Manager:
         self.vault.grid(row=1, column=2, sticky="ew", padx=(12, 0), pady=(4, 0))
         self.button(selectors, "新建用户", lambda: self.create("user")).grid(row=1, column=1, padx=(5, 0))
         self.button(selectors, "新建仓库", lambda: self.create("vault")).grid(row=1, column=3, padx=(5, 0))
-        self.button(selectors, "导入仓库密钥", self.import_key).grid(row=2, column=2, sticky="w", padx=(12, 0), pady=(6, 0))
-        ttk.Label(frame, text="已授权访问").pack(anchor="w")
-        listing = ttk.Frame(frame)
+        self.button(selectors, "导入仓库密钥", self.import_key).grid(row=2, column=2, sticky="w",
+                                                                     padx=(12, 0), pady=(6, 0))
+        ttk.Label(parent, text="已授权访问").pack(anchor="w")
+        listing = ttk.Frame(parent)
         listing.pack(fill="both", expand=True, pady=(5, 12))
         self.rows = ttk.Treeview(listing, columns=("user", "vault"), show="headings", selectmode="browse")
         self.rows.heading("user", text="用户")
@@ -73,28 +117,42 @@ class Manager:
         scrollbar = ttk.Scrollbar(listing, orient="vertical", command=self.rows.yview)
         scrollbar.pack(side="right", fill="y")
         self.rows.configure(yscrollcommand=scrollbar.set)
-        bottom = ttk.Frame(frame)
+        bottom = ttk.Frame(parent)
         bottom.pack(fill="x")
         for label, action in (
             ("发放配对配置", lambda: self.issue(False)), ("重置凭据", lambda: self.issue(True)),
             ("撤销授权", self.revoke), ("刷新", self.refresh),
         ):
             self.button(bottom, label, action).pack(side="left", padx=(0, 8))
-        accounts = ttk.Frame(frame)
-        accounts.pack(fill="x", pady=(10, 0))
-        for label, action in (
-            ("设置注册口令", self.set_invite),
-            ("关闭注册", self.close_registration),
-            ("查看注册账号", self.list_accounts),
-            ("停用／启用账号", self.change_account),
-        ):
-            self.button(accounts, label, action).pack(side="left", padx=(0, 8))
-        enrolment = ttk.Frame(frame)
-        enrolment.pack(fill="x", pady=(8, 0))
-        self.button(enrolment, "待审批注册", self.list_registrations).pack(side="left", padx=(0, 8))
-        self.button(enrolment, "配置发信邮箱", self.configure_smtp).pack(side="left")
-        self.window.protocol("WM_DELETE_WINDOW", self.close)
-        self.refresh()
+
+    def refresh_registrations(self):
+        self.submit(("list-registrations",), "正在读取待审批注册…", self.show_pending)
+
+    def show_pending(self, output):
+        registrations = json.loads(output)
+        children = self.pending.get_children()
+        if children:
+            self.pending.delete(*children)
+        for name, email in registrations:
+            self.pending.insert("", "end", values=(name, email))
+        self.status.set(f"{len(registrations)} 项待审批" if registrations else "没有待审批注册")
+
+    def decide(self, approve):
+        selection = self.pending.selection()
+        if not selection:
+            messagebox.showinfo("注册审批", "请先选择一条待审批注册。", parent=self.window)
+            return
+        name, email = self.pending.item(selection[0], "values")
+        action = "批准" if approve else "拒绝"
+        if not messagebox.askyesno("注册审批", f"{action} {name}（{email}）的注册申请？", parent=self.window):
+            return
+
+        def done(_):
+            self.status.set(f"已{action} {name} 的注册。")
+            self.refresh_registrations()
+
+        command = "approve-registration" if approve else "reject-registration"
+        self.submit((command, name), f"正在{action}…", done)
 
     def button(self, parent, label, action):
         control = ttk.Button(parent, text=label, command=action)
@@ -134,44 +192,6 @@ class Manager:
                 messagebox.showerror("笔记同步管理", str(error), parent=self.window)
 
         self.window.after(80, check)
-
-    def list_registrations(self):
-        self.submit(("list-registrations",), "正在读取待审批注册…", self.show_registrations)
-
-    def show_registrations(self, output):
-        registrations = json.loads(output)
-        self.status.set(f"{len(registrations)} 项待审批")
-        if not registrations:
-            messagebox.showinfo("注册审批", "没有已验证邮箱的待审批申请。", parent=self.window)
-            return
-        panel = tk.Toplevel(self.window)
-        panel.title("待审批注册")
-        panel.geometry("570x330")
-        listing = ttk.Treeview(panel, columns=("name", "email"), show="headings", selectmode="browse")
-        listing.heading("name", text="用户名")
-        listing.heading("email", text="已验证邮箱")
-        listing.pack(fill="both", expand=True, padx=12, pady=12)
-        for name, email in registrations:
-            listing.insert("", "end", values=(name, email))
-
-        def decide(approve):
-            rows = listing.selection()
-            if not rows:
-                return
-            name, email = listing.item(rows[0], "values")
-            action = "批准" if approve else "拒绝"
-            if not messagebox.askyesno("注册审批", f"{action} {name}（{email}）的注册申请？", parent=panel):
-                return
-            def done(_):
-                panel.destroy()
-                self.status.set(f"已{action} {name} 的注册。")
-            command = "approve-registration" if approve else "reject-registration"
-            self.submit((command, name), f"正在{action}…", done)
-
-        controls = ttk.Frame(panel)
-        controls.pack(fill="x", padx=12, pady=(0, 12))
-        ttk.Button(controls, text="批准", command=lambda: decide(True)).pack(side="left")
-        ttk.Button(controls, text="拒绝", command=lambda: decide(False)).pack(side="left", padx=8)
 
     def configure_smtp(self):
         parent = self.window
@@ -264,6 +284,7 @@ class Manager:
             for user, vault in state["access"]:
                 self.rows.insert("", "end", values=(user, vault))
             self.status.set(f"{len(self.users)} 位用户 · {len(self.vaults)} 个仓库 · {len(state['access'])} 项授权")
+            self.refresh_registrations()
 
         self.submit(("admin-list",), "正在读取用户和仓库…", display)
 
