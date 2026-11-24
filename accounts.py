@@ -80,7 +80,7 @@ def send_code(path, recipient, code):
     message["From"], message["To"] = config["address"], recipient
     message["Subject"] = "Blueee Notes 邮箱验证码"
     message.set_content(
-        "欢迎来到 Blueee Notes 🥰\n\n"
+        "欢迎来到Blueee的小插件\n\n"
         "这是我做的一个笔记同步小插件，方便你在电脑、手机和平板上接着写。"
         "后续功能也会慢慢加上。\n\n"
         f"邮箱验证码：{code}\n有效期：15 分钟\n\n"
@@ -98,7 +98,7 @@ def send_code(path, recipient, code):
  style="max-width:520px;background:#ffffff;border:1px solid #e9e1f2;border-radius:16px">
 <tr><td style="padding:28px 24px 4px;font-size:15px;font-weight:bold;color:#6640a6">Blueee Notes</td></tr>
 <tr><td style="padding:0 24px;font-size:16px;line-height:1.7">
-<h1 style="margin:8px 0 12px;color:#272338;font-size:26px;line-height:1.35">欢迎来同步你的笔记 🥰</h1>
+<h1 style="margin:8px 0 12px;color:#272338;font-size:26px;line-height:1.35">欢迎来到Blueee的小插件</h1>
 <p style="margin:0 0 20px">这是我做的一个笔记同步小插件，方便你在电脑、手机和平板上接着写。后续功能也会慢慢加上。</p>
 </td></tr>
 <tr><td style="padding:0 24px">

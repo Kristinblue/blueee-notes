@@ -107,6 +107,12 @@ class ScopePicker extends Modal {
         const actions = content.createDiv({cls: "simple-note-sync-actions"});
         this.primary = actions.createEl("button", {text: "开始同步", cls: "mod-cta", attr: {type: "button"}});
         this.primary.addEventListener("click", () => this.run());
+        this.pluginListButton = actions.createEl("button", {text: "插件同步", attr: {type: "button"}});
+        this.pluginListButton.addEventListener("click", () => {
+            if (this.running) return;
+            this.close();
+            new PluginList(this.app, this.plugin).open();
+        });
         this.conflictLink = actions.createEl("button", {attr: {type: "button"}});
         this.conflictLink.addEventListener("click", () => {
             this.close();
@@ -156,6 +162,7 @@ class ScopePicker extends Modal {
                     : this.direction === "push" ? "上传所选范围的本机改动。"
                         : "上传和下载所选范围的改动。");
         this.primary.disabled = this.running || !selected;
+        this.pluginListButton.disabled = this.running;
         const count = Object.keys(this.plugin.state.conflicts).length;
         this.conflictLink.hidden = count === 0;
         this.conflictLink.setText("处理冲突 · " + count);

@@ -302,16 +302,17 @@ test("automatic sync waits for saved active notes and respects focus and conflic
     assert.equal(instance.pending.size, 0);
 });
 
-test("the sync dialog opens with Obsidian's modal keymap scope", () => {
+test("the sync dialog preserves modal scope and opens the plugin list", () => {
+    let openedPluginList = false;
     class Element {
-        constructor() { this.dataset = {}; }
+        constructor(text = "") { this.dataset = {}; this.textContent = text; this.listeners = {}; }
         createDiv() { return new Element(); }
-        createEl() { return new Element(); }
+        createEl(_tag, options) { return new Element(options?.text); }
         createSpan() { return new Element(); }
         addClass() {}
         toggleClass() {}
         setText() {}
-        addEventListener() {}
+        addEventListener(event, listener) { this.listeners[event] = listener; }
     }
     class Modal {
         constructor(app) {
@@ -321,6 +322,7 @@ test("the sync dialog opens with Obsidian's modal keymap scope", () => {
             this.modalEl = new Element();
         }
         setTitle() {}
+        close() {}
     }
     class Setting {
         setName() { return this; }
@@ -331,7 +333,10 @@ test("the sync dialog opens with Obsidian's modal keymap scope", () => {
         module: {exports: {}},
         require: name => name === "obsidian"
             ? {Modal, Setting, Plugin: class {}, PluginSettingTab: class {}, FuzzySuggestModal: class {}, setIcon() {}}
-            : name === "./engine" ? require("./plugin/engine") : {ConflictPicker: class {}},
+            : name === "./engine" ? require("./plugin/engine") : {
+                ConflictPicker: class {},
+                PluginList: class { open() { openedPluginList = true; } },
+            },
     };
     const source = fs.readFileSync(require.resolve("./plugin/main"), "utf8");
     const Picker = vm.runInNewContext(source + "\nScopePicker;", sandbox);
@@ -342,4 +347,14 @@ test("the sync dialog opens with Obsidian's modal keymap scope", () => {
     picker.onOpen();
     assert.equal(picker.primary.disabled, false);
     assert.equal(picker.selectedScope().path, "验收.md");
+    assert.equal(picker.pluginListButton.textContent, "插件同步");
+    picker.running = true;
+    picker.update();
+    assert.equal(picker.pluginListButton.disabled, true);
+    picker.pluginListButton.listeners.click();
+    assert.equal(openedPluginList, false);
+    picker.running = false;
+    picker.update();
+    picker.pluginListButton.listeners.click();
+    assert.equal(openedPluginList, true);
 });
