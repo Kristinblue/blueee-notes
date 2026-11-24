@@ -346,7 +346,7 @@ def handler(path):
                     return
             try:
                 size = int(self.headers.get("Content-Length", "0"))
-                if not 0 < size <= 128 * 1024:
+                if not 0 < size <= 4 * 1024 * 1024:
                     raise ValueError
                 value = json.loads(self.rfile.read(size))["encrypted"]
                 if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9+/=]+\.[A-Za-z0-9+/=]+", value):
