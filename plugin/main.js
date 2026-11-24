@@ -268,6 +268,11 @@ class PairSettings extends PluginSettingTab {
 
         const account = this.plugin.state.pair?.account;
         if (connected) {
+            new Setting(this.containerEl).setName("笔记同步")
+                .setDesc("选择范围，拉取、双向同步或推送笔记与附件。")
+                .addButton(button => button.setButtonText("打开同步面板").onClick(() => {
+                    this.plugin.openScopePicker();
+                }));
             new Setting(this.containerEl).setName("插件同步")
                 .setDesc("在设备间查看同一仓库的社区插件清单。")
                 .addButton(button => button.setButtonText("打开插件清单").onClick(() => {
@@ -379,11 +384,8 @@ module.exports = class SimpleNoteSync extends Plugin {
         this.applying = new Set();
         this.acknowledged = new Map();
         this.ackPending = new Map();
-        const choose = () => {
-            if (this.busy) new Notice("正在同步，请稍候");
-            else new ScopePicker(this.app, this).open();
-        };
-        this.addRibbonIcon("refresh-cw", "同步笔记", choose);
+        const choose = () => this.openScopePicker();
+        this.addRibbonIcon("arrow-up-down", "笔记同步", choose);
         this.addCommand({id: "choose-scope", name: "选择同步范围", callback: choose});
         this.addCommand({id: "repeat", name: "按上次范围同步", callback: () => {
             if (this.state.last) this.sync(this.state.last, {direction: this.state.lastDirection});
@@ -410,6 +412,11 @@ module.exports = class SimpleNoteSync extends Plugin {
     }
 
     onunload() { window.clearTimeout(this.autoTimer); }
+
+    openScopePicker() {
+        if (this.busy) new Notice("正在同步，请稍候");
+        else new ScopePicker(this.app, this).open();
+    }
 
     async connectAccount(values) {
         if (this.busy) throw Error("请等待当前同步结束");
