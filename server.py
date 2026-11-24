@@ -16,7 +16,7 @@ from urllib.parse import parse_qs, urlsplit
 import accounts
 
 ID = re.compile(r"[0-9a-f]{64}")
-MAX_REQUEST = 46 * 1024 * 1024
+MAX_REQUEST = 64 * 1024 * 1024
 DEVICE = re.compile(r"[0-9a-f-]{36}")
 
 

@@ -661,14 +661,17 @@ module.exports = class SimpleNoteSync extends Plugin {
             }
             const result = await synchronize({scope, direction, ...this.session(pair)});
             await this.flushAcknowledgements(pair);
-            const summary = direction === "pull" ? `下载 ${result.downloaded}`
-                : direction === "push" ? `上传 ${result.uploaded}`
-                    : `上传 ${result.uploaded} · 下载 ${result.downloaded}${result.merged ? " · 合并 " + result.merged : ""}`;
+            const skipped = result.skipped ? ` · 跳过 ${result.skipped} 个超过 40 MiB 的文件` : "";
+            const summary = direction === "pull" ? `下载 ${result.downloaded}${skipped}`
+                : direction === "push" ? `上传 ${result.uploaded}${skipped}`
+                    : `上传 ${result.uploaded} · 下载 ${result.downloaded}${result.merged ? " · 合并 " + result.merged : ""}${skipped}`;
             return result.conflicts
                 ? report("warning", direction === "push"
                     ? `${summary} · 跳过 ${result.conflicts} 项冲突，双向同步可查看远端版本`
                     : `${summary} · ${result.conflicts} 项冲突待处理`)
-                : report("success", result.uploaded || result.downloaded || result.merged ? "完成 · " + summary : "此方向没有待处理的改动。");
+                : report(result.skipped ? "warning" : "success",
+                    result.uploaded || result.downloaded || result.merged || result.skipped
+                        ? "完成 · " + summary : "此方向没有待处理的改动。");
         } catch (error) {
             return report("error", "同步暂停：" + error.message);
         } finally {

@@ -1,7 +1,7 @@
 const {diff3Merge} = require("node-diff3");
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
-const MAX_FILE = 32 * 1024 * 1024;
+const MAX_FILE = 40 * 1024 * 1024;
 const CONFLICTS = "Sync conflicts";
 const MERGE_LIMIT = 256 * 1024;
 
@@ -98,7 +98,7 @@ async function revisionData(cipher, request, id, revision, hash, historical = fa
 }
 
 async function writeRevision(cipher, request, id, path, revision, bytes, hash) {
-    if (bytes && bytes.byteLength > MAX_FILE) throw Error("文件超过 32 MiB：" + path);
+    if (bytes && bytes.byteLength > MAX_FILE) throw Error("文件超过 40 MiB：" + path);
     const metadata = await cipher.seal(
         encoder.encode(JSON.stringify({path, hash})), id + ":metadata:" + (revision + 1));
     const data = bytes === null ? null : await cipher.seal(bytes, id + ":data:" + (revision + 1));
@@ -173,7 +173,7 @@ async function synchronize({scope, direction = "both", key, checkpoints, store, 
     const cipher = await cryptography(key);
     const remote = await readManifest(cipher, scope, request);
     const paths = new Set([...remote.keys(), ...store.paths().filter(path => inScope(path, scope))]);
-    const result = {uploaded: 0, downloaded: 0, conflicts: 0, merged: 0};
+    const result = {uploaded: 0, downloaded: 0, conflicts: 0, merged: 0, skipped: 0};
     for (const path of paths) {
         const record = remote.get(path);
         const prior = Object.hasOwn(checkpoints, path) ? checkpoints[path] : {hash: null, revision: 0};
@@ -224,6 +224,10 @@ async function synchronize({scope, direction = "both", key, checkpoints, store, 
             continue;
         }
         if (localChanged && direction !== "pull") {
+            if (current && current.byteLength > MAX_FILE) {
+                result.skipped++;
+                continue;
+            }
             try {
                 const entry = await writeRevision(cipher, request, id, path, revision, current, localHash);
                 await persist(path, entry, id);
