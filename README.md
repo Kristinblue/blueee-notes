@@ -46,14 +46,14 @@ Blueee Notes 通过 HTTPS 连接运营者的同步服务 `https://blueee.cn:8443
 
 ## 管理
 
-在 Windows 双击 `打开同步管理.cmd` 打开管理窗口。它通过已配置的 `ssh blueee-server` 连接服务器，窗口有两个标签：
+在 Windows 双击 `打开同步管理.cmd` 打开管理窗口。它通过已配置的 `ssh blueee-server` 连接服务器，只管理新账号：
 
-- **账号管理**（默认）：设置注册口令、关闭注册、查看注册账号、停用/启用账号、配置发信邮箱；下面是**待审批注册**列表，选中后点 **批准** 或 **拒绝**。
-- **旧版配对**：新建用户/仓库、发放配对配置、重置凭据、撤销授权、导入仓库密钥。
+- 设置注册口令、关闭注册、查看注册账号、停用/启用账号、配置发信邮箱；
+- 下面是**待审批注册**列表：选中一行，点 **批准** 或 **拒绝**；点 **刷新待审批** 重新读取。只有已验证邮箱的申请会出现。
 
 ### 新账号审批
 
-新账号注册并验证邮箱后会出现在「账号管理」的待审批列表里。选中一行，点 **批准** 或 **拒绝**；点 **刷新待审批** 重新读取。只有已验证邮箱的申请会出现；没验证邮箱的不会出现。`查看注册账号` 可以看全部账号并停用/启用；`设置注册口令`/`关闭注册` 控制注册。
+新账号注册并验证邮箱后会出现在待审批列表里。选中一行，点 **批准** 或 **拒绝**；点 **刷新待审批** 重新读取。`查看注册账号` 可以看全部账号并停用/启用；`设置注册口令`/`关闭注册` 控制注册。
 
 也可以用 SSH 审批：
 
@@ -61,20 +61,6 @@ Blueee Notes 通过 HTTPS 连接运营者的同步服务 `https://blueee.cn:8443
 runuser -u simple-note-sync -- python3 /srv/simple-note-sync/server.py --db /srv/simple-note-sync/data/sync.sqlite3 list-registrations
 runuser -u simple-note-sync -- python3 /srv/simple-note-sync/server.py --db /srv/simple-note-sync/data/sync.sqlite3 approve-registration <用户名>
 ```
-
-### 旧版配对
-
-Windows 上双击 `打开同步管理.cmd`，使用已配置的 `ssh blueee-server` 连接。可以新建用户和仓库、发放配对配置、重置凭据、撤销授权。管理员通过 SSH 操作，用户的配对配置只能访问授权仓库。新建仓库的密钥生成并保存在管理员电脑的 `%LOCALAPPDATA%\SimpleNoteSyncAdmin\vault-keys.json`；已有仓库可选中后从对应的配对 JSON 导入密钥。请单独备份仓库密钥。
-
-在服务器通过 SSH 运行以下命令。用户名和仓库名区分大小写。
-
-```sh
-runuser -u simple-note-sync -- python3 /srv/simple-note-sync/server.py --db /srv/simple-note-sync/data/sync.sqlite3 grant alice reading
-runuser -u simple-note-sync -- python3 /srv/simple-note-sync/server.py --db /srv/simple-note-sync/data/sync.sqlite3 list
-runuser -u simple-note-sync -- python3 /srv/simple-note-sync/server.py --db /srv/simple-note-sync/data/sync.sqlite3 revoke alice reading
-```
-
-`grant` 创建账号和仓库（若不存在），为指定组合发放令牌；再次发放会使原令牌失效。要做共享仓库，给需要访问的人员分别授权同一个仓库，并由仓库拥有者分发该仓库的加密密钥。停用账号的某项授权不会删除仓库文件；重新授权需要用户重新导入配对配置。
 
 ## 同步行为
 
