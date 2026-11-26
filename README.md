@@ -1,4 +1,35 @@
 # Blueee Notes
+
+Sync selected Obsidian notes, attachments, and community plugin settings across devices. A Blueee Notes account and a registration invite from the operator are required.
+
+## Installation
+
+1. Open Obsidian → Settings → Community plugins.
+2. Turn off Restricted mode if prompted.
+3. Browse → search "Blueee Notes" → Install → Enable.
+4. Manual install: copy `main.js`, `manifest.json`, and `styles.css` into `<vault>/.obsidian/plugins/simple-note-sync/`, then enable the plugin.
+
+## Usage
+
+1. Open Settings → Blueee Notes.
+2. Enter the registration invite and click Verify.
+3. New account: Register. Existing account: Log in and connect an existing vault.
+4. Enter account, password, and remote vault name (lowercase letters/digits/`-`/`_`, 3–40 characters, unique per account).
+5. First device for a vault: "Create a new remote vault". Other devices: "Log in and connect an existing vault" with the same remote name.
+6. Notes: Settings → Blueee Notes → Note sync → Open sync panel; choose Pull only / Push only / Two-way and a scope.
+7. Plugins: open Plugin sync to upload the plugin list and `data.json` settings; on another device click "Sync to this device", install missing plugins from the community store, then enable or reload them manually.
+8. Device verification: the first login from an Obsidian profile requires an email code; later logins in the same profile do not.
+
+## Notes
+
+- A remote vault name is unique per account. The same name means the same vault; different local vaults should use different names.
+- Device verification is per Obsidian profile. A new profile, reinstall, or cleared app data counts as a new device.
+- Per-file limit: 40 MiB. Oversized files are skipped. Auto sync only handles Markdown; PDFs and images need a manual scope.
+- The server stores encrypted content and metadata. The operator can see account names, emails, vault names, file counts/sizes/times, and device names, but not note contents or file paths. Do not share one account between people.
+- There is no password reset. Keep the account password safe.
+
+## 中文说明
+
 这是一个小唐人笔记同步插件，仅个人使用，以及分享给好友，需要作者的注册口令，有了之后才能注册账号和使用功能。只是一个小服务器喵~
 在多台设备之间同步所选的 Obsidian 笔记、附件与社区插件清单。
 
@@ -18,7 +49,7 @@
 - **删除与保留**：远端始终保留每个文件的最新版本；删除文件并推送后，最新状态变成「已删除标记」，旧内容进历史。旧版本至少保留 7 天，且最近 30 天内出现过的设备都已确认更新版本后，服务器才会在后续确认时清理。最新版本不会因为所有设备都同步过而自动删除。
 - **附件和 PDF**：单文件上限 40 MiB；超过上限的文件会跳过并提示，不会卡住其它文件。自动同步只同步 Markdown 笔记，PDF/图片/附件要手动选文件夹或整个仓库同步。服务端按加密后的 Base64 保存，占用约为原文件的 1.33 倍；文件多/大时注意服务器磁盘和带宽。
 - **多仓库**：同一账号可以建多个远端仓库（不同名字）；每个本地仓库只连一个远端仓库。要让两台设备同步同一个仓库，填同一个名字；不同笔记库用不同名字，避免混在一起。
-- **更新**：插件市场里搜 Blueee Notes，点「检查更新」；当前版本 0.5.5。
+- **更新**：插件市场里搜 Blueee Notes，点「检查更新」；当前版本 0.5.6。
 
 ## 注册与跨设备使用
 
