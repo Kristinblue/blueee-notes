@@ -2,12 +2,14 @@
 
 Sync selected Obsidian notes, attachments, and community plugin settings across devices. A Blueee Notes account and a registration invite from the operator are required.
 
+Chinese documentation: [README.zh.md](README.zh.md)
+
 ## Installation
 
 1. Open Obsidian → Settings → Community plugins.
 2. Turn off Restricted mode if prompted.
 3. Browse → search "Blueee Notes" → Install → Enable.
-4. Manual install: copy `main.js`, `manifest.json`, and `styles.css` into `<vault>/.obsidian/plugins/simple-note-sync/`, then enable the plugin.
+4. Manual installation: copy `main.js`, `manifest.json`, and `styles.css` into `<vault>/.obsidian/plugins/simple-note-sync/`, then enable the plugin.
 
 ## Usage
 
@@ -20,94 +22,35 @@ Sync selected Obsidian notes, attachments, and community plugin settings across 
 7. Plugins: open Plugin sync to upload the plugin list and `data.json` settings; on another device click "Sync to this device", install missing plugins from the community store, then enable or reload them manually.
 8. Device verification: the first login from an Obsidian profile requires an email code; later logins in the same profile do not.
 
-## Notes
+## Sync behavior
 
-- A remote vault name is unique per account. The same name means the same vault; different local vaults should use different names.
-- Device verification is per Obsidian profile. A new profile, reinstall, or cleared app data counts as a new device.
-- Per-file limit: 40 MiB. Oversized files are skipped. Auto sync only handles Markdown; PDFs and images need a manual scope.
-- The server stores encrypted content and metadata. The operator can see account names, emails, vault names, file counts/sizes/times, and device names, but not note contents or file paths. Do not share one account between people.
-- There is no password reset. Keep the account password safe.
+- The server stores encrypted paths, hashes, and file contents. Clients fetch the encrypted manifest and only upload/download files in the selected scope.
+- Pull only downloads remote changes. Push only uploads local changes. Two-way does both. Small Markdown files with a common base are merged with diff3; conflicts are saved to `Sync conflicts` and the local file is kept.
+- Deletions are changes. A remote deletion moves an unmodified local file to the trash; a modified local file becomes a conflict copy.
+- The server keeps the latest encrypted version of every file. Old versions are kept for at least 7 days and are cleaned after all devices seen in the last 30 days acknowledge a newer revision.
+- Per-file limit: 40 MiB. Oversized files are skipped. Auto sync only handles Markdown; PDFs and images require a manual scope.
 
-## 中文说明
+## Plugin sync
 
-这是一个小唐人笔记同步插件，仅个人使用，以及分享给好友，需要作者的注册口令，有了之后才能注册账号和使用功能。只是一个小服务器喵~
-在多台设备之间同步所选的 Obsidian 笔记、附件与社区插件清单。
+- Upload the installed plugin list plus each plugin's `data.json` settings, encrypted in the same remote vault.
+- "Sync to this device" applies settings for installed plugins with the same version. It does not enable or disable plugins automatically; enable or reload them manually.
+- Missing plugins are linked to the Obsidian community store. Plugin binaries are never transferred through the sync server.
+- Only `data.json` is synced; `localStorage`/`IndexedDB` and large settings are skipped.
 
-## 快速开始
+## Privacy
 
-1. 在 Obsidian 安装并启用 Blueee Notes（插件市场搜「Blueee Notes」；手动安装见「开发安装」）。
-2. 打开插件设置，先填管理员给的**注册口令**，点「验证口令」。
-3. 第一次使用选「注册新账号」，填账号、至少 12 位密码、邮箱、远端仓库名；收到邮件后填验证码，等管理员批准。
-4. 已有账号选「登录并连接已有仓库」，填账号、密码、远端仓库名。
-5. 同步：设置 → Blueee Notes → **笔记同步 → 打开同步面板**，选方向（仅拉取/仅推送/双向）和范围（当前笔记/文件夹/整个仓库）。
+- Notes, paths, plugin lists, and plugin settings are encrypted on the device. The server stores encrypted data and an encrypted vault key; it never receives the account password.
+- The operator can see account names, emails, remote vault names, file counts/sizes/times, and device names, but not note contents or file paths.
+- Do not share one account between people. Each person should register their own account. There is no password reset; keep the password safe.
 
-## 关键说明
-
-- **远端仓库名**：同一账号下唯一，只能用小写字母、数字、`-`、`_`，3–40 位；不同账号可以重名。**同一个名字 = 同一个仓库**；不同本地仓库用不同名字。第一台设备用「已有账号，新建远端仓库」；已有仓库的其它设备用「登录并连接已有仓库」，填同一个名字。
-- **设备验证**：按 Obsidian 配置（profile）算，不是按物理设备。同一个配置里只验证一次，之后新建仓库不再要邮件码；换配置、重装 Obsidian、清应用数据会被当成新设备，需要再验证一次。iPad/手机通常只有一个应用配置，所以只验证一次。
-- **同步方向**：仅拉取只下载远端；仅推送只上传本地；双向同时拉和推。两边都改过的文件，小型 Markdown 有共同旧版本会尝试自动合并，否则远端版本存到 `Sync conflicts`，本地保留。
-- **删除与保留**：远端始终保留每个文件的最新版本；删除文件并推送后，最新状态变成「已删除标记」，旧内容进历史。旧版本至少保留 7 天，且最近 30 天内出现过的设备都已确认更新版本后，服务器才会在后续确认时清理。最新版本不会因为所有设备都同步过而自动删除。
-- **附件和 PDF**：单文件上限 40 MiB；超过上限的文件会跳过并提示，不会卡住其它文件。自动同步只同步 Markdown 笔记，PDF/图片/附件要手动选文件夹或整个仓库同步。服务端按加密后的 Base64 保存，占用约为原文件的 1.33 倍；文件多/大时注意服务器磁盘和带宽。
-- **多仓库**：同一账号可以建多个远端仓库（不同名字）；每个本地仓库只连一个远端仓库。要让两台设备同步同一个仓库，填同一个名字；不同笔记库用不同名字，避免混在一起。
-- **更新**：插件市场里搜 Blueee Notes，点「检查更新」；当前版本 0.5.7。
-
-## 注册与跨设备使用
-
-注册时填写账号、至少 12 个字符的密码、邮箱和远端仓库名（默认 main）。邮件到达后，在 Obsidian 里填写验证码；每个邮箱最多绑定一个账号；管理员批准后回到插件设置登录。另一台设备选「登录并连接已有仓库」，使用同一个账号、密码和远端仓库名；新设备通过邮件验证码验证，插件在设备上自动解开仓库密钥。其他本地仓库可以连接不同的远端仓库；同一账号可在新本地仓库里用「已有账号，新建远端仓库」创建另一个。各账号的仓库彼此独立。
-
-## 同步插件清单和配置
-
-在「同步笔记」面板点「插件同步」，也可在设置中打开插件清单。上传本机时，清单包含插件名称、ID、版本、启用状态和已安装插件的 `data.json` 配置；另一台设备点「同步到本机」会为已安装且版本相同的插件应用配置。启用状态只显示，不自动启用或停用插件；应用配置后请在「第三方插件」里手动启用/重载。缺失的插件会显示 Obsidian 市场链接，插件程序仍需从市场安装，不经过同步服务器。版本不同的插件不会应用配置，先更新再同步。只同步 `data.json`，不同步 `localStorage`/`IndexedDB`；较大的配置会被跳过。配置可能包含密钥，以加密形式存放在同一个远端仓库，只应同步到同一账号的可信设备。每次上传替换该仓库的远端清单和配置。
-
-## 隐私和网络服务
-
-Blueee Notes 通过 HTTPS 连接运营者的同步服务 `https://blueee.cn:8443/simple-sync`，用于注册、登录和同步。服务端保存账号名、邮箱、密码证明的散列、会话令牌的散列、仓库名和加密数据；同步内容、插件清单和配置在设备上加密，仓库的文件密钥在设备端由账号密码派生的独立密钥加密。服务端只保存加密后的仓库密钥。服务端管理员能看到账号名、邮箱、远端仓库名、文件数量/大小/修订时间和设备名，但看不到笔记内容、文件名/路径、插件清单或插件配置；这些在设备端加密。不要和别人共用同一个账号；共用账号等于共用密码和仓库密钥。管理员如果修改客户端或暴力破解弱密码，仍可能获取内容，所以请使用强密码并只安装可信来源的插件。邮箱验证用于控制账号登录；强密码仍然有助于防止对被窃数据库进行离线猜测。注册口令仅在注册时经 HTTPS 发送校验，管理员设置的口令以散列保存。注册邮箱用于通过管理员配置的 SMTP 发件服务发送一次性验证码并供审批。原始账号密码保留在本次登录表单和客户端计算中，服务器收到的是独立派生的登录证明。请妥善保管账号密码；忘记密码且没有可打开原仓库的设备时，管理员无法从服务器备份恢复笔记。当前版本没有邮件重置或密码找回功能。账号会话到期后可重新登录。
-
-## 笔记同步
-
-点击刷新/上下箭头图标或设置里的「笔记同步」打开同步面板。开启「自动同步」后，插件会在打开笔记和暂停输入后同步当前 Markdown 笔记，Obsidian 在前台时还会定期检查远端改动；已有仓库首次升级时需要主动开启这个开关。
-
-需要手动操作时，选择「仅拉取」「双向同步」或「仅推送」，再选当前笔记、一个文件夹或当前仓库。「按上次范围同步」会复用上次的手动范围和方向。文件夹包含子文件夹；单篇模式仅同步所选文件，引用的附件可通过文件夹或整个仓库一起同步。
-
-## 开发安装与旧版配对
-
-运行 `npm ci` 和 `npm run build`。在测试仓的插件目录新建 `simple-note-sync`，复制 `dist/main.js`、`dist/manifest.json` 和 `dist/styles.css`，重启 Obsidian 后启用「Blueee Notes」。Windows、Android 和 iPadOS 通过同一套 Obsidian API 工作，手机端需单独验证插件安装和使用。
-
-已有测试仓可在设置中继续使用旧版配对 JSON。它由 `url`（如 `https://blueee.cn:8443/simple-sync`）、`token`（仓库授权）和 `key`（Base64 编码的 32 字节仓库加密密钥）组成。每个新仓库生成一个随机密钥并妥善保管；同一个仓库的设备使用同一个密钥。配对 JSON 包含凭据，存放在仓库之外，私下交付。
-
-## 管理
-
-在 Windows 双击 `打开同步管理.cmd` 打开管理窗口。它通过已配置的 `ssh blueee-server` 连接服务器，只管理新账号：
-
-- 设置注册口令、关闭注册、查看注册账号、停用/启用账号、配置发信邮箱；
-- 下面是**待审批注册**列表：选中一行，点 **批准** 或 **拒绝**；点 **刷新待审批** 重新读取。只有已验证邮箱的申请会出现。
-
-### 新账号审批
-
-新账号注册并验证邮箱后会出现在待审批列表里。选中一行，点 **批准** 或 **拒绝**；点 **刷新待审批** 重新读取。`查看注册账号` 可以看全部账号并停用/启用；`设置注册口令`/`关闭注册` 控制注册。
-
-也可以用 SSH 审批：
+## Development
 
 ```sh
-runuser -u simple-note-sync -- python3 /srv/simple-note-sync/server.py --db /srv/simple-note-sync/data/sync.sqlite3 list-registrations
-runuser -u simple-note-sync -- python3 /srv/simple-note-sync/server.py --db /srv/simple-note-sync/data/sync.sqlite3 approve-registration <用户名>
+npm ci
+npm run build
+npm test
 ```
 
-## 同步行为
+## License
 
-- 服务器保存加密的路径、内容摘要和文件。每次会获取加密目录，用于在设备本地确定范围；只有选中范围的文件内容会上传或下载。
-- 双向同步时，有共同旧版本且改动不重叠的小型 Markdown 会尝试自动合并。遇到冲突，插件将远端版本另存到 `Sync conflicts`，保留当前文件，并暂停该篇的自动同步。同步面板的「处理冲突」可以对照本机、共同旧版本和远端内容，再选保留本机、采用远端或手动保存合并结果。
-- 仅推送时，遇到冲突会跳过该文件；仅拉取时，可在本地查看冲突副本，远端文件不会被改动。
-- 已同步文件的删除会作为变更参与同步；另一端只有在原文件没有本地修改时才移到回收站，否则保留并生成冲突副本。
-- 服务器始终保留每篇文件的最新加密版本。设备按文件确认已同步的修订；旧版本至少保留 7 天，只有最近 30 天内确认过这个文件的设备都已越过该修订，服务器才会在后续确认时清理它。没有共同旧版本时，冲突留给用户处理。
-- 当前原型单文件上限为 40 MiB；超过上限的文件会在同步时跳过并提示，不会阻断其它文件。自动同步只处理 Markdown 笔记，附件/PDF 需要手动同步。先在独立测试仓使用，确认移动端行为后再迁移正式笔记。
-
-运行 `npm test` 可用临时 SQLite 和本机 HTTP 服务执行端到端测试。
-
-## 卸载插件
-
-设置 → 第三方插件 → 已安装插件 → Blueee Notes → **卸载**。卸载只会移除本地插件和它的本地登录信息（`.obsidian/plugins/simple-note-sync`），**不会删除笔记**，也**不会删除远端仓库或账号**。想保留登录状态就点「禁用」而不是「卸载」。卸载后远端数据仍在；要删除远端仓库或账号数据，需要管理员在服务器上处理。重装后重新登录即可，远端笔记还在。
-
-## 许可证
-
-Blueee Notes 按 [MIT License](LICENSE) 发布。客户端打包使用 [node-diff3](https://github.com/bhousel/node-diff3)，其许可证保存在 [LICENSE-node-diff3.md](LICENSE-node-diff3.md)。
+MIT. See [LICENSE](LICENSE) and [LICENSE-node-diff3.md](LICENSE-node-diff3.md).
