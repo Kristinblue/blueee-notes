@@ -65,12 +65,12 @@
     border-radius: 6px;
 }
 
-.simple-note-sync-direction-options label:has(input:checked) {
+.simple-note-sync-direction-options label.is-checked {
     background: var(--interactive-accent);
     color: var(--text-on-accent);
 }
 
-.simple-note-sync-direction-options label:has(input:focus-visible) {
+.simple-note-sync-direction-options label:focus-within {
     outline: 2px solid var(--interactive-accent);
     outline-offset: 2px;
 }
@@ -101,12 +101,12 @@
     background: color-mix(in srgb, var(--interactive-accent) 9%, var(--background-primary));
 }
 
-.simple-note-sync-choice:has(input:focus-visible) {
+.simple-note-sync-choice:focus-within {
     outline: 2px solid var(--interactive-accent);
     outline-offset: 2px;
 }
 
-.simple-note-sync-choice:has(input:disabled):not(.is-selected) {
+.simple-note-sync-choice.is-disabled:not(.is-selected) {
     opacity: 0.62;
 }
 
@@ -228,6 +228,6 @@
 }
 .simple-note-sync-resolution-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
-.simple-note-sync-account [hidden] {
-    display: none !important;
+.simple-note-sync-account .simple-note-sync-hidden {
+    display: none;
 }

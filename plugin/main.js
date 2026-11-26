@@ -34,7 +34,7 @@ class ScopePicker extends Modal {
             ? last.path : null;
         this.kind = this.activePath ? "file" : this.folder ? "folder" : null;
         this.direction = "both";
-        this.directionInputs = [];
+        this.directionLabels = [];
         this.running = false;
         this.visible = false;
         this.fields = [];
@@ -87,7 +87,7 @@ class ScopePicker extends Modal {
                 this.direction = id;
                 this.update();
             });
-            this.directionInputs.push(radio);
+            this.directionLabels.push({label: option, input: radio});
         }
         const choices = content.createEl("fieldset", {cls: "simple-note-sync-choices"});
         choices.createEl("legend", {text: "同步范围"});
@@ -149,13 +149,17 @@ class ScopePicker extends Modal {
             input.checked = kind === this.kind;
             input.disabled = this.running || (kind === "file" && !this.activePath);
             row.toggleClass("is-selected", input.checked);
+            row.toggleClass("is-disabled", input.disabled);
         }
         this.folderText.setText(this.folder ?? "含子文件夹");
         this.pickFolder.hidden = this.kind !== "folder";
         this.pickFolder.disabled = this.running;
         this.pickFolder.setText(this.folder ? "更换文件夹" : "选择文件夹");
         this.status.dataset.state = "info";
-        for (const input of this.directionInputs) input.disabled = this.running;
+        for (const {label, input} of this.directionLabels) {
+            input.disabled = this.running;
+            label.toggleClass("is-checked", input.checked);
+        }
         this.status.setText(this.kind === "folder" && !this.folder ? "请选择要同步的文件夹。"
             : this.kind === "file" ? "单篇只处理这一文件。"
                 : this.direction === "pull" ? "下载所选范围的远端改动。"

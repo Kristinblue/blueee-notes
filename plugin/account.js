@@ -154,7 +154,7 @@ function accountForm(parent, plugin, done) {
     };
     const show = (field, visible) => {
         field.row.settingEl.hidden = !visible;
-        field.row.settingEl.style.setProperty("display", visible ? "" : "none", visible ? "" : "important");
+        field.row.settingEl.toggleClass("simple-note-sync-hidden", !visible);
         field.input.disabled = !visible;
         field.input.required = visible;
     };
@@ -168,7 +168,7 @@ function accountForm(parent, plugin, done) {
         show(legacyKey, visibleDetails && needsLegacyKey);
         show(code, (visibleDetails && needsDeviceCode) || step === "verify" || step === "resume");
         actions.settingEl.hidden = step === "invite";
-        actions.settingEl.style.setProperty("display", step === "invite" ? "none" : "", step === "invite" ? "important" : "");
+        actions.settingEl.toggleClass("simple-note-sync-hidden", step === "invite");
         submit.setText(buttons[step]);
     };
     actions.addDropdown(field => {
