@@ -78,7 +78,7 @@ class PluginList extends Modal {
         const pair = this.plugin.state.pair;
         this.setTitle("插件清单和配置");
         this.contentEl.createEl("p", {
-            text: "同步插件名称、版本、启用状态和 data.json 配置。插件程序仍从 Obsidian 市场安装，不会传输插件代码。配置可能包含密钥，只应同步到同一账号的可信设备。",
+            text: "同步插件名称、版本、启用状态和 data.json 配置。插件程序仍从 Obsidian 市场安装，不会传输插件代码。应用配置后请手动启用/重载插件；本插件不会自动启用或停用其它插件。配置可能包含密钥，只应同步到同一账号的可信设备。",
         });
         const sync = this.contentEl.createEl("button", {text: "同步到本机"});
         const publish = this.contentEl.createEl("button", {text: "上传本机清单和配置"});
@@ -107,7 +107,6 @@ class PluginList extends Modal {
             const remote = validateList(JSON.parse(decoder.decode(await cipher.open(encrypted, CONTEXT))));
             const installed = new Map(local.map(item => [item.id, item]));
             let applied = 0;
-            let toggled = 0;
             let mismatched = 0;
             let missing = 0;
             for (const item of remote) {
@@ -129,18 +128,6 @@ class PluginList extends Modal {
                 } else if (item.config) {
                     mismatched++;
                 }
-                try {
-                    if (current.enabled !== item.enabled) {
-                        if (item.enabled) await this.app.plugins.enablePlugin(item.id);
-                        else await this.app.plugins.disablePlugin(item.id);
-                        toggled++;
-                    } else if (item.config && sameVersion && current.enabled) {
-                        await this.app.plugins.disablePlugin(item.id);
-                        await this.app.plugins.enablePlugin(item.id);
-                    }
-                } catch {
-                    // The config is written; the plugin may need a manual reload.
-                }
             }
             for (const item of remote) {
                 if (item.id === this.plugin.manifest.id) continue;
@@ -159,8 +146,8 @@ class PluginList extends Modal {
                 }
                 row.createSpan({text: " · " + parts.join(" · ")});
             }
-            status.setText(`已应用 ${applied} 个配置，调整 ${toggled} 个启用状态；${missing} 个未安装，${mismatched} 个版本不同或配置写入失败。`);
-            if (applied) new Notice("插件配置已同步；未安装的插件请点名字去市场安装。");
+            status.setText(`已应用 ${applied} 个配置；${missing} 个未安装，${mismatched} 个版本不同或配置写入失败。请在「第三方插件」里手动启用/重载插件生效。`);
+            if (applied) new Notice("插件配置已写入；请手动启用/重载插件生效。未安装的插件请点名字去市场安装。");
         }));
         publish.addEventListener("click", () => {
             if (publish.dataset.confirm !== "yes") {
